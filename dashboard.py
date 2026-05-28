@@ -46,6 +46,25 @@ ALL_ETFS = [
 BASE_TARGET = 3.0
 STOP_LOSS   = 2.0
 
+WEEKLY_TARGET_OPTIONS = {
+    "0.5% — Very low (safe but barely worth it)": 0.5,
+    "1.0% — Conservative ✅ (achievable most weeks)": 1.0,
+    "1.5% — Balanced ✅ (best risk/reward)": 1.5,
+    "2.0% — Aggressive ⚠️ (hard to hit every week)": 2.0,
+    "3.0% — Very aggressive ❌ (expect many misses)": 3.0,
+}
+
+def get_week_open(df):
+    # Return the price at the start of the current calendar week (nearest trading day).
+    today      = pd.Timestamp.now(tz=df.index.tz).normalize()
+    days_back  = today.dayofweek          # Mon=0, Tue=1 … Fri=4, Sat=5, Sun=6
+    week_start = today - pd.Timedelta(days=days_back)
+    week_df    = df[df.index.normalize() >= week_start]
+    if week_df.empty:
+        week_df = df  # fallback: full history
+    col = "Open" if "Open" in week_df.columns else "Close"
+    return round(float(week_df[col].iloc[0]), 2)
+
 # NSE India requires a session cookie obtained by hitting the homepage first
 _NSE_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -157,6 +176,23 @@ portfolio_map = {p["nse_symbol"]: p for p in portfolio}
 st.title("📈 ETF Signal Dashboard")
 st.caption(f"{datetime.now().strftime('%d %b %Y, %I:%M %p')} IST  |  Auto-refreshes every 5 min  |  🟢 NSE Live = real-time  🟡 YF ~15m = 15min delayed  ⚪ EOD = prev close")
 
+# ── Weekly Target Selector ───────────────────────────────────
+if "weekly_target_label" not in st.session_state:
+    st.session_state["weekly_target_label"] = "1.5% — Balanced ✅ (best risk/reward)"
+
+_wt_col, _ = st.columns([2, 5])
+with _wt_col:
+    chosen_label = st.selectbox(
+        "🎯 My Weekly Gain Target",
+        options=list(WEEKLY_TARGET_OPTIONS.keys()),
+        index=list(WEEKLY_TARGET_OPTIONS.keys()).index(st.session_state["weekly_target_label"]),
+        help="Dashboard will show BUY when entry looks good and BOOK PROFIT when this week's gain hits your target.",
+    )
+    st.session_state["weekly_target_label"] = chosen_label
+    WEEKLY_TARGET = WEEKLY_TARGET_OPTIONS[chosen_label]
+
+st.caption(f"📌 Target this week: **+{WEEKLY_TARGET}%** per ETF  |  'Wk Signal' column shows weekly buy/sell status")
+
 # ── Portfolio Summary Cards ───────────────────────────────────
 if portfolio:
     total_invested = 0.0
@@ -231,6 +267,21 @@ for etf in ALL_ETFS:
     tgt_price = round(price * (1 + sig["target_pct"] / 100), 2) if sig["target_pct"] > 0 else None
     day_str   = f"{'+' if sig['day_chg']>=0 else ''}{sig['day_chg']}%"
 
+    week_open  = get_week_open(df)
+    week_pct   = round((price - week_open) / week_open * 100, 2) if week_open else 0.0
+    week_str   = f"{'+' if week_pct>=0 else ''}{week_pct}%"
+    # Weekly signal
+    if week_pct >= WEEKLY_TARGET:
+        wk_signal = "🔴 BOOK PROFIT"
+    elif week_pct <= -0.5 and sig["action"] == "BUY":
+        wk_signal = "🟢 BUY (dip)"
+    elif sig["action"] == "BUY":
+        wk_signal = "🟢 BUY"
+    elif sig["action"] == "SELL":
+        wk_signal = "🔴 EXIT"
+    else:
+        wk_signal = "🟡 HOLD"
+
     in_portfolio = nse in portfolio_map
     if in_portfolio:
         p        = portfolio_map[nse]
@@ -243,6 +294,8 @@ for etf in ALL_ETFS:
             "ETF":          etf["label"],
             "Symbol":       nse,
             "Risk":         etf["risk"],
+            "Wk Signal":    wk_signal,
+            "Week %":       week_str,
             "Signal":       signal,
             "Score":        f"{sig['score']}/3",
             "Price (Rs.)":  price,
@@ -263,6 +316,8 @@ for etf in ALL_ETFS:
             "ETF":          etf["label"],
             "Symbol":       nse,
             "Risk":         etf["risk"],
+            "Wk Signal":    wk_signal,
+            "Week %":       week_str,
             "Signal":       tech_icon,
             "Score":        f"{sig['score']}/3",
             "Price (Rs.)":  price,
@@ -311,17 +366,31 @@ def color_src(val):
     if "YF"  in v:  return "color:#fd7e14;font-weight:600"
     return "color:#6c757d"
 
+def color_wk_signal(val):
+    v = str(val)
+    if "BOOK" in v or "EXIT" in v: return "color:#dc3545;font-weight:700"
+    if "BUY" in v:                 return "color:#28a745;font-weight:700"
+    if "HOLD" in v:                return "color:#fd7e14;font-weight:700"
+    return "color:#6c757d"
+
+def color_week_pct(val):
+    v = str(val)
+    if v == "—": return ""
+    return "color:#28a745;font-weight:600" if "+" in v or v.startswith("0") else "color:#dc3545;font-weight:600"
+
 styled = (
     df_table.style
-    .map(color_signal, subset=["Signal"])
-    .map(color_pnl,    subset=["P&L %", "P&L Rs."])
-    .map(color_risk,   subset=["Risk"])
-    .map(color_prob,   subset=["Buy Prob %"])
-    .map(color_src,    subset=["Src"])
+    .map(color_wk_signal, subset=["Wk Signal"])
+    .map(color_week_pct,  subset=["Week %"])
+    .map(color_signal,    subset=["Signal"])
+    .map(color_pnl,       subset=["P&L %", "P&L Rs."])
+    .map(color_risk,      subset=["Risk"])
+    .map(color_prob,      subset=["Buy Prob %"])
+    .map(color_src,       subset=["Src"])
     .set_properties(**{"font-size": "0.88rem"})
 )
 
-st.caption("💡 **Signal** for your portfolio ETFs is based on your P&L + technical score combined. For others it's pure technical.")
+st.caption("💡 **Wk Signal** = weekly buy/sell based on your gain target above.  **Signal** = portfolio P&L + technical combined (for holdings).")
 st.dataframe(styled, hide_index=True, use_container_width=True, height=380)
 
 # ── Inline portfolio editor below table ───────────────────────
