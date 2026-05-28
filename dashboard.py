@@ -7,6 +7,66 @@ import ta
 
 st.set_page_config(page_title="ETF Trade Signals", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
 
+def position_advice(pnl_pct, signal_action, signal_score):
+    """Smart advice combining existing gain + current signal."""
+    if pnl_pct >= 15:
+        if signal_action == "SELL / WAIT" or signal_score <= 0:
+            return ("BOOK FULL PROFIT",
+                    f"You are up {pnl_pct}% — excellent gain. Signal is weakening. Exit now and lock in profit.",
+                    "#dc3545", "sell-box")
+        else:
+            return ("BOOK 50% + HOLD REST",
+                    f"You are up {pnl_pct}% — strong gain. Signal still bullish. Sell half to secure profit, hold half to ride further.",
+                    "#fd7e14", "hold-box")
+    elif pnl_pct >= 8:
+        if signal_action == "SELL / WAIT":
+            return ("CONSIDER BOOKING PROFIT",
+                    f"You are up {pnl_pct}% and signal turned negative. Good time to exit or set a tight stop-loss.",
+                    "#fd7e14", "hold-box")
+        elif signal_action == "BUY":
+            return ("HOLD — LET IT RUN",
+                    f"You are up {pnl_pct}% and signal is still bullish. Set trailing stop-loss and stay invested.",
+                    "#28a745", "buy-box")
+        else:
+            return ("HOLD WITH STOP-LOSS",
+                    f"You are up {pnl_pct}%. Mixed signals — protect gains with a stop-loss at -2% from current price.",
+                    "#fd7e14", "hold-box")
+    elif pnl_pct >= 3:
+        if signal_action == "BUY":
+            return ("HOLD — TREND IS UP",
+                    f"You are up {pnl_pct}%. Signal is bullish — stay invested, target is higher.",
+                    "#28a745", "buy-box")
+        elif signal_action == "SELL / WAIT":
+            return ("HOLD FOR NOW / WATCH",
+                    f"You are up {pnl_pct}%. Signal is cautious — watch closely. Exit if it drops toward your cost.",
+                    "#fd7e14", "hold-box")
+        else:
+            return ("HOLD",
+                    f"You are up {pnl_pct}%. No strong signal either way. Keep holding.",
+                    "#6c757d", "hold-box")
+    elif pnl_pct >= 0:
+        if signal_action == "BUY":
+            return ("HOLD — EARLY STAGE PROFIT",
+                    f"Small gain of {pnl_pct}%. Signal is bullish — could grow more. Stay patient.",
+                    "#28a745", "buy-box")
+        else:
+            return ("HOLD — NEAR BREAKEVEN",
+                    f"You are at {pnl_pct}% gain. Wait for a clearer BUY signal before adding more.",
+                    "#6c757d", "hold-box")
+    else:
+        if signal_action == "BUY":
+            return ("HOLD — DO NOT PANIC SELL",
+                    f"You are down {abs(pnl_pct)}% but signal shows recovery possible. ETFs bounce back — hold and wait.",
+                    "#fd7e14", "hold-box")
+        elif signal_action == "SELL / WAIT":
+            return ("HOLD — AVOID AVERAGING DOWN",
+                    f"You are down {abs(pnl_pct)}% and signal is weak. Do not buy more yet. Wait for BUY signal before any action.",
+                    "#dc3545", "sell-box")
+        else:
+            return ("HOLD — WAIT FOR SIGNAL",
+                    f"You are down {abs(pnl_pct)}%. Market is unclear. Hold and wait — ETFs recover over time.",
+                    "#6c757d", "hold-box")
+
 st.markdown("""
 <style>
 .buy-box  { background:#d4edda; border-left:6px solid #28a745; padding:20px; border-radius:10px; }
@@ -135,6 +195,15 @@ for col, p in zip(cols, PORTFOLIO):
             f"{abs(pnl_pct)}%  |  Rs. {abs(pnl_rs):,.0f}</span></div>",
             unsafe_allow_html=True)
         st.markdown("")
+
+        adv_title, adv_text, adv_color, adv_box = position_advice(pnl_pct, sig["action"], sig["score"])
+        st.markdown(f"""
+        <div class="{adv_box}" style="margin-bottom:12px;">
+            <div style="font-size:0.85rem;color:#555;margin-bottom:4px;">What should I do with my existing position?</div>
+            <div style="font-size:1.3rem;font-weight:800;color:{adv_color}">{adv_title}</div>
+            <div style="font-size:0.95rem;margin-top:6px">{adv_text}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
         st.markdown("##### Why this signal?")
         for r in sig["reasons"]:
