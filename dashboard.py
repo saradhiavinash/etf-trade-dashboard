@@ -135,23 +135,38 @@ def compute_signals(df, avg_cost=None):
                 score=score, action=action, target_pct=target_pct, buy_prob=buy_prob)
 
 def portfolio_signal(technical_action, pnl_pct):
-    # Smart signal: P&L thresholds are the primary driver
-    if pnl_pct >= 20:
-        return "🔴 BOOK PROFIT (20%+)"
+    # Partial booking: sell in tranches — never sell everything at once
+    if pnl_pct >= 25:
+        return "🔴 SELL 75% — Keep 25% riding"
+    elif pnl_pct >= 18:
+        return "🔴 SELL 50% — Book half, ride half"
     elif pnl_pct >= 12:
-        return "🔴 BOOK PROFIT"
+        return "🔴 SELL 25% — First partial profit"
     elif pnl_pct >= 8:
-        return "🔴 SELL — Lock in Gains" if technical_action in ("SELL", "HOLD") else "🟡 HOLD (trailing SL)"
+        return "🔴 SELL 25%" if technical_action in ("SELL", "HOLD") else "🟡 HOLD (trail SL)"
     elif pnl_pct >= 5:
         return "🔴 SELL NOW" if technical_action == "SELL" else "🟡 HOLD (protect gains)"
     elif pnl_pct >= 2:
         return "🟢 BUY MORE" if technical_action == "BUY" else "🟡 HOLD"
     elif pnl_pct >= 0:
         return "🟢 BUY MORE" if technical_action == "BUY" else "🟡 HOLD (near breakeven)"
-    elif pnl_pct >= -5:  # small loss
+    elif pnl_pct >= -5:
         return "🟢 BUY MORE (avg down)" if technical_action == "BUY" else "🟡 HOLD (wait)"
-    else:  # big loss
+    else:
         return "🟢 BUY MORE (avg down)" if technical_action == "BUY" else "⚪ AVOID — Cut Loss?"
+
+def trailing_sl(df, trail_pct=3.0):
+    # Highest close in last 10 trading days → trail SL is 3% below that peak
+    recent_high = round(float(df["Close"].tail(10).max()), 2)
+    return round(recent_high * (1 - trail_pct / 100), 2)
+
+def partial_qty(units, pnl_pct):
+    # How many units to sell at each tranche
+    if pnl_pct >= 25: return int(units * 0.75)
+    if pnl_pct >= 18: return int(units * 0.50)
+    if pnl_pct >= 12: return int(units * 0.25)
+    if pnl_pct >= 8:  return int(units * 0.25)
+    return 0
 
 # ── Hide sidebar toggle arrow ────────────────────────────────
 st.markdown('<style>[data-testid="collapsedControl"]{display:none}</style>', unsafe_allow_html=True)
@@ -246,11 +261,14 @@ for etf in ALL_ETFS:
         pnl_pct = round((price - avg) / avg * 100, 2)
         pnl_rs  = round((price - avg) * units, 0)
         signal  = portfolio_signal(sig["action"], pnl_pct)
+        trail   = trailing_sl(df)
+        sell_q  = partial_qty(units, pnl_pct)
         rows.append({
             "ETF":          etf["label"],
             "Symbol":       nse,
             "Risk":         etf["risk"],
             "Signal":       signal,
+            "Sell Qty":     sell_q if sell_q > 0 else "—",
             "Score":        f"{sig['score']}/3",
             "Price (Rs.)":  price,
             "Today %":      day_str,
@@ -259,6 +277,7 @@ for etf in ALL_ETFS:
             "Avg Cost":     avg,
             "P&L %":        f"{'+' if pnl_pct>=0 else ''}{pnl_pct}%",
             "P&L Rs.":      f"{'+' if pnl_rs>=0 else ''}{pnl_rs:,.0f}",
+            "Trail SL":     trail,
             "Src":          price_src,
             "Buy Prob %":   sig["buy_prob"],
             "Stop Loss":    sl_price,
@@ -271,6 +290,7 @@ for etf in ALL_ETFS:
             "Symbol":       nse,
             "Risk":         etf["risk"],
             "Signal":       tech_icon,
+            "Sell Qty":     "—",
             "Score":        f"{sig['score']}/3",
             "Price (Rs.)":  price,
             "Today %":      day_str,
@@ -279,6 +299,7 @@ for etf in ALL_ETFS:
             "Avg Cost":     0.0,
             "P&L %":        "—",
             "P&L Rs.":      "—",
+            "Trail SL":     "—",
             "Src":          price_src,
             "Buy Prob %":   sig["buy_prob"],
             "Stop Loss":    sl_price,
@@ -318,22 +339,27 @@ def color_src(val):
     if "YF"  in v:  return "color:#fd7e14;font-weight:600"
     return "color:#6c757d"
 
-def color_week_pct(val):
-    v = str(val)
-    if v == "—": return ""
-    return "color:#28a745;font-weight:600" if v.startswith("+") or v.startswith("0") else "color:#dc3545;font-weight:600"
+def color_trail_sl(val):
+    if str(val) == "—": return ""
+    return "color:#e65100;font-weight:600"  # orange-red for trailing SL
+
+def color_sell_qty(val):
+    if str(val) == "—": return ""
+    return "color:#dc3545;font-weight:700"
 
 styled = (
     df_table.style
-    .map(color_signal,    subset=["Signal"])
-    .map(color_pnl,       subset=["P&L %", "P&L Rs."])
-    .map(color_risk,      subset=["Risk"])
-    .map(color_prob,      subset=["Buy Prob %"])
-    .map(color_src,       subset=["Src"])
+    .map(color_signal,   subset=["Signal"])
+    .map(color_sell_qty, subset=["Sell Qty"])
+    .map(color_pnl,      subset=["P&L %", "P&L Rs."])
+    .map(color_risk,     subset=["Risk"])
+    .map(color_prob,     subset=["Buy Prob %"])
+    .map(color_trail_sl, subset=["Trail SL"])
+    .map(color_src,      subset=["Src"])
     .set_properties(**{"font-size": "0.88rem"})
 )
 
-st.caption("💡 **Signal** for your holdings = driven by your actual P&L%. Hit 12%+ → 🔴 BOOK PROFIT automatically. For watchlist ETFs = pure technical signal.")
+st.caption("💡 **Signal** = partial profit booking at 12% / 18% / 25% P&L.  **Sell Qty** = units to sell at this tranche.  **Trail SL** = 3% below 10-day high — exit if price falls here.")
 st.dataframe(styled, hide_index=True, use_container_width=True, height=380)
 
 # ── Inline portfolio editor below table ───────────────────────
