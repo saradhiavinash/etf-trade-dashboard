@@ -94,7 +94,7 @@ def get_price_data(symbol):
     df = yf.Ticker(symbol).history(period="3mo", interval="1d")
     return df[df["Close"] > 0].dropna(subset=["Close"])
 
-def compute_signals(df):
+def compute_signals(df, avg_cost=None):
     close   = df["Close"]
     rsi_val = round(float(ta.momentum.RSIIndicator(close, window=14).rsi().iloc[-1]), 1)
     macd_o  = ta.trend.MACD(close)
@@ -102,9 +102,11 @@ def compute_signals(df):
     macd_s  = float(macd_o.macd_signal().iloc[-1])
     ema9    = float(close.ewm(span=9).mean().iloc[-1])
     ema21   = float(close.ewm(span=21).mean().iloc[-1])
+    ema200  = float(close.ewm(span=200).mean().iloc[-1])
     price   = round(float(close.iloc[-1]), 2)
     prev    = round(float(close.iloc[-2]), 2)
     day_chg = round(((price - prev) / prev) * 100, 2)
+    low_52w = round(float(close.tail(252).min()), 2)
     score = 0
     if rsi_val < 40:    score += 1
     elif rsi_val > 65:  score -= 1
@@ -118,11 +120,17 @@ def compute_signals(df):
         action = "SELL"; target_pct = 0.0
     else:
         action = "HOLD"; target_pct = 0.0
-    # Buy probability: score base + RSI distance from oversold + MACD direction
+    # ── Buy probability ───────────────────────────────────────
     score_base = {-3: 10, -2: 20, -1: 35, 0: 45, 1: 55, 2: 68, 3: 83}[score]
-    rsi_bonus  = round((50 - rsi_val) * 0.3)   # oversold RSI → higher prob; overbought → lower
+    rsi_bonus  = round((50 - rsi_val) * 0.3)      # oversold → higher; overbought → lower
     macd_bonus = 5 if macd_v > macd_s else -5
-    buy_prob   = min(95, max(5, score_base + rsi_bonus + macd_bonus))
+    # Extra ETF-specific factors
+    deep_oversold  = 15 if rsi_val < 35 else 0                                          # deeply oversold
+    below_avg      = 10 if (avg_cost and price < avg_cost) else 0                       # good to average down
+    near_52w_low   = 10 if low_52w > 0 and (price - low_52w) / low_52w < 0.08 else 0  # within 8% of 52w low
+    above_ema200   = -10 if price > ema200 * 1.15 else 0                               # >15% above 200 EMA = extended
+    buy_prob = min(95, max(5, score_base + rsi_bonus + macd_bonus
+                              + deep_oversold + below_avg + near_52w_low + above_ema200))
     return dict(price=price, day_chg=day_chg, rsi=rsi_val,
                 score=score, action=action, target_pct=target_pct, buy_prob=buy_prob)
 
@@ -212,12 +220,13 @@ for etf in ALL_ETFS:
     df = get_price_data(etf["yf_symbol"])
     if df.empty:
         continue
-    sig        = compute_signals(df)
+    nse        = etf["nse_symbol"]
+    avg_cost   = portfolio_map[nse]["avg_cost"] if nse in portfolio_map else None
+    sig        = compute_signals(df, avg_cost=avg_cost)
     nse_price  = get_nse_price(etf["nse_symbol"])
     yf_price   = get_live_price_yf(etf["yf_symbol"]) if not nse_price else None
     price      = nse_price or yf_price or sig["price"]
     price_src  = "🟢 NSE Live" if nse_price else ("🟡 YF ~15m" if yf_price else "⚪ EOD")
-    nse   = etf["nse_symbol"]
     sl_price  = round(price * (1 - STOP_LOSS / 100), 2)
     tgt_price = round(price * (1 + sig["target_pct"] / 100), 2) if sig["target_pct"] > 0 else None
     day_str   = f"{'+' if sig['day_chg']>=0 else ''}{sig['day_chg']}%"
