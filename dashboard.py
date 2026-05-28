@@ -270,33 +270,35 @@ for etf in ALL_ETFS:
     week_open  = get_week_open(df)
     week_pct   = round((price - week_open) / week_open * 100, 2) if week_open else 0.0
     week_str   = f"{'+' if week_pct>=0 else ''}{week_pct}%"
-    # Weekly signal
+
+    # ── Signal: weekly target is the override, technicals fill the rest ──
     if week_pct >= WEEKLY_TARGET:
-        wk_signal = "🔴 BOOK PROFIT"
+        signal = "🔴 BOOK PROFIT"
     elif week_pct <= -0.5 and sig["action"] == "BUY":
-        wk_signal = "🟢 BUY (dip)"
+        signal = "🟢 BUY (weekly dip)"
     elif sig["action"] == "BUY":
-        wk_signal = "🟢 BUY"
+        signal = "🟢 BUY"
     elif sig["action"] == "SELL":
-        wk_signal = "🔴 EXIT"
+        signal = "🔴 SELL / EXIT"
     else:
-        wk_signal = "🟡 HOLD"
+        signal = "🟡 HOLD"
 
     in_portfolio = nse in portfolio_map
     if in_portfolio:
-        p        = portfolio_map[nse]
-        avg      = p["avg_cost"]
-        units    = p["units"]
-        pnl_pct  = round((price - avg) / avg * 100, 2)
-        pnl_rs   = round((price - avg) * units, 0)
-        signal   = portfolio_signal(sig["action"], pnl_pct)
+        p       = portfolio_map[nse]
+        avg     = p["avg_cost"]
+        units   = p["units"]
+        pnl_pct = round((price - avg) / avg * 100, 2)
+        pnl_rs  = round((price - avg) * units, 0)
+        # Weekly target hit overrides portfolio signal
+        if week_pct < WEEKLY_TARGET:
+            signal = portfolio_signal(sig["action"], pnl_pct)
         rows.append({
             "ETF":          etf["label"],
             "Symbol":       nse,
             "Risk":         etf["risk"],
-            "Wk Signal":    wk_signal,
-            "Week %":       week_str,
             "Signal":       signal,
+            "Week %":       week_str,
             "Score":        f"{sig['score']}/3",
             "Price (Rs.)":  price,
             "Today %":      day_str,
@@ -311,14 +313,12 @@ for etf in ALL_ETFS:
             "Target":       tgt_price if tgt_price else "—",
         })
     else:
-        tech_icon = {"BUY": "🟢 BUY", "SELL": "🔴 SELL", "HOLD": "🟡 HOLD"}.get(sig["action"])
         rows.append({
             "ETF":          etf["label"],
             "Symbol":       nse,
             "Risk":         etf["risk"],
-            "Wk Signal":    wk_signal,
+            "Signal":       signal,
             "Week %":       week_str,
-            "Signal":       tech_icon,
             "Score":        f"{sig['score']}/3",
             "Price (Rs.)":  price,
             "Today %":      day_str,
@@ -338,9 +338,9 @@ df_table = pd.DataFrame(rows)
 # Styling
 def color_signal(val):
     v = str(val)
-    if "BUY MORE" in v or v == "🟢 BUY":   return "color:#28a745;font-weight:700"
-    if "SELL" in v or "BOOK" in v:          return "color:#dc3545;font-weight:700"
-    if "HOLD" in v or "WAIT" in v:          return "color:#fd7e14;font-weight:700"
+    if "BUY" in v:              return "color:#28a745;font-weight:700"
+    if "SELL" in v or "BOOK" in v or "EXIT" in v: return "color:#dc3545;font-weight:700"
+    if "HOLD" in v or "WAIT" in v: return "color:#fd7e14;font-weight:700"
     return "color:#6c757d"
 
 def color_pnl(val):
@@ -366,23 +366,15 @@ def color_src(val):
     if "YF"  in v:  return "color:#fd7e14;font-weight:600"
     return "color:#6c757d"
 
-def color_wk_signal(val):
-    v = str(val)
-    if "BOOK" in v or "EXIT" in v: return "color:#dc3545;font-weight:700"
-    if "BUY" in v:                 return "color:#28a745;font-weight:700"
-    if "HOLD" in v:                return "color:#fd7e14;font-weight:700"
-    return "color:#6c757d"
-
 def color_week_pct(val):
     v = str(val)
     if v == "—": return ""
-    return "color:#28a745;font-weight:600" if "+" in v or v.startswith("0") else "color:#dc3545;font-weight:600"
+    return "color:#28a745;font-weight:600" if v.startswith("+") or v.startswith("0") else "color:#dc3545;font-weight:600"
 
 styled = (
     df_table.style
-    .map(color_wk_signal, subset=["Wk Signal"])
-    .map(color_week_pct,  subset=["Week %"])
     .map(color_signal,    subset=["Signal"])
+    .map(color_week_pct,  subset=["Week %"])
     .map(color_pnl,       subset=["P&L %", "P&L Rs."])
     .map(color_risk,      subset=["Risk"])
     .map(color_prob,      subset=["Buy Prob %"])
@@ -390,7 +382,7 @@ styled = (
     .set_properties(**{"font-size": "0.88rem"})
 )
 
-st.caption("💡 **Wk Signal** = weekly buy/sell based on your gain target above.  **Signal** = portfolio P&L + technical combined (for holdings).")
+st.caption("💡 **Signal** = driven by your weekly target above. When weekly gain hits target → 🔴 BOOK PROFIT. Below target: technicals + P&L decide BUY/HOLD/SELL.  **Week %** = gain since this week's open.")
 st.dataframe(styled, hide_index=True, use_container_width=True, height=380)
 
 # ── Inline portfolio editor below table ───────────────────────
