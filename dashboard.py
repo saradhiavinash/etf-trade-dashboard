@@ -50,6 +50,17 @@ ALL_ETFS = [
 BASE_TARGET = 3.0
 STOP_LOSS   = 2.0
 
+@st.cache_data(ttl=60)   # live price refreshes every 60s
+def get_live_price(symbol):
+    """Fetch latest traded price using 1-min intraday data."""
+    try:
+        df = yf.Ticker(symbol).history(period="1d", interval="1m")
+        if not df.empty:
+            return round(float(df["Close"].dropna().iloc[-1]), 2)
+    except Exception:
+        pass
+    return None
+
 @st.cache_data(ttl=600)
 def get_price_data(symbol):
     df = yf.Ticker(symbol).history(period="3mo", interval="1d")
@@ -117,8 +128,9 @@ for etf in ALL_ETFS:
     df = get_price_data(etf["yf_symbol"])
     if df.empty:
         continue
-    sig   = compute_signals(df)
-    price = sig["price"]
+    sig        = compute_signals(df)
+    live_price = get_live_price(etf["yf_symbol"])
+    price      = live_price if live_price else sig["price"]
     nse   = etf["nse_symbol"]
     sl_price  = round(price * (1 - STOP_LOSS / 100), 2)
     tgt_price = round(price * (1 + sig["target_pct"] / 100), 2) if sig["target_pct"] > 0 else None
