@@ -50,9 +50,17 @@ ALL_ETFS = [
 BASE_TARGET = 3.0
 STOP_LOSS   = 2.0
 
-@st.cache_data(ttl=60)   # live price refreshes every 60s
+@st.cache_data(ttl=60)   # refreshes every 60s
 def get_live_price(symbol):
-    """Fetch latest traded price using 1-min intraday data."""
+    """fast_info.last_price is the most current price yfinance provides (~15 min NSE delay)."""
+    try:
+        fi = yf.Ticker(symbol).fast_info
+        p  = float(fi["last_price"])
+        if p and p > 0:
+            return round(p, 2)
+    except Exception:
+        pass
+    # fallback: latest 1-min candle
     try:
         df = yf.Ticker(symbol).history(period="1d", interval="1m")
         if not df.empty:
@@ -119,7 +127,7 @@ portfolio     = load_portfolio()
 portfolio_map = {p["nse_symbol"]: p for p in portfolio}
 
 st.title("📈 ETF Signal Dashboard")
-st.caption(f"{datetime.now().strftime('%d %b %Y, %I:%M %p')} IST  |  Auto-refreshes every 5 min")
+st.caption(f"{datetime.now().strftime('%d %b %Y, %I:%M %p')} IST  |  Auto-refreshes every 5 min  |  ⚠️ Prices have ~15 min NSE delay (Yahoo Finance limitation)")
 st.divider()
 
 # Build rows
