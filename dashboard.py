@@ -82,11 +82,23 @@ def compute_signals(df):
     return dict(price=price, day_chg=day_chg, rsi=rsi_val,
                 score=score, action=action, target_pct=target_pct)
 
-# ── Sidebar ───────────────────────────────────────────────────
+def portfolio_signal(technical_action, pnl_pct):
+    """Smart signal for ETFs you own — combines P&L with technical."""
+    if pnl_pct >= 15:
+        return "🔴 BOOK PROFIT" if technical_action in ("SELL", "HOLD") else "🟡 HOLD (trailing SL)"
+    elif pnl_pct >= 8:
+        return "🔴 SELL NOW"   if technical_action == "SELL" else "🟡 HOLD (protect gains)"
+    elif pnl_pct >= 3:
+        return "🟢 BUY MORE"   if technical_action == "BUY"  else "🟡 HOLD"
+    elif pnl_pct >= 0:
+        return "🟢 BUY MORE"   if technical_action == "BUY"  else "🟡 HOLD (near breakeven)"
+    else:  # loss
+        return "🟡 HOLD (wait)" if technical_action == "BUY"  else "⚪ WAIT / AVOID AVERAGING"
+
+# ── Sidebar: sidebar collapsed by default on mobile ──────────
 with st.sidebar:
     st.header("My Portfolio")
     portfolio = load_portfolio()
-    portfolio_map = {p["nse_symbol"]: p for p in portfolio}
 
     updated = []
     remove_idx = None
@@ -95,8 +107,8 @@ with st.sidebar:
         with c1: st.markdown(f"**{p['label']}**")
         with c2:
             if st.button("🗑", key=f"rm_{i}", help="Remove"): remove_idx = i
-        units    = st.number_input("Units",        value=float(p["units"]),    min_value=0.0,             key=f"u_{i}")
-        avg_cost = st.number_input("Avg cost (Rs.)",value=float(p["avg_cost"]),min_value=0.0, step=0.01,  key=f"a_{i}")
+        units    = st.number_input("Units",         value=float(p["units"]),    min_value=0.0,            key=f"u_{i}")
+        avg_cost = st.number_input("Avg cost (Rs.)",value=float(p["avg_cost"]), min_value=0.0, step=0.01, key=f"a_{i}")
         updated.append({**p, "units": units, "avg_cost": avg_cost})
         st.divider()
 
@@ -106,15 +118,15 @@ with st.sidebar:
         st.rerun()
 
     with st.expander("➕ Add new ETF"):
-        new_label = st.text_input("Name",           placeholder="e.g. Nifty BeES")
-        new_nse   = st.text_input("NSE Symbol",     placeholder="e.g. NIFTYBEES")
-        new_units = st.number_input("Units",         min_value=0.0, value=0.0, key="nu")
-        new_avg   = st.number_input("Avg cost (Rs.)",min_value=0.0, value=0.0, step=0.01, key="na")
+        new_label = st.text_input("Name",            placeholder="e.g. Nifty BeES")
+        new_nse   = st.text_input("NSE Symbol",      placeholder="e.g. NIFTYBEES")
+        new_units = st.number_input("Units",          min_value=0.0, value=0.0, key="nu")
+        new_avg   = st.number_input("Avg cost (Rs.)", min_value=0.0, value=0.0, step=0.01, key="na")
         if st.button("Add to Portfolio", use_container_width=True):
             if new_label and new_nse:
-                yf_sym = new_nse.upper().strip() + ".NS"
                 updated.append({"label": new_label, "nse_symbol": new_nse.upper().strip(),
-                                 "yf_symbol": yf_sym, "units": new_units, "avg_cost": new_avg})
+                                 "yf_symbol": new_nse.upper().strip() + ".NS",
+                                 "units": new_units, "avg_cost": new_avg})
                 save_portfolio(updated)
                 st.rerun()
             else:
@@ -130,14 +142,14 @@ with st.sidebar:
     st.caption(f"Auto-refreshes every 5 min | {datetime.now().strftime('%I:%M %p')}")
 
 # ── Main ──────────────────────────────────────────────────────
-portfolio = load_portfolio()
+portfolio     = load_portfolio()
 portfolio_map = {p["nse_symbol"]: p for p in portfolio}
 
 st.title("📈 ETF Signal Dashboard")
 st.caption(f"{datetime.now().strftime('%d %b %Y, %I:%M %p')} IST  |  Auto-refreshes every 5 min")
 st.divider()
 
-# Build table rows
+# Build rows
 rows = []
 for etf in ALL_ETFS:
     df = get_price_data(etf["yf_symbol"])
@@ -146,13 +158,10 @@ for etf in ALL_ETFS:
     sig   = compute_signals(df)
     price = sig["price"]
     nse   = etf["nse_symbol"]
-
-    signal_icon = {"BUY": "🟢 BUY", "SELL": "🔴 SELL", "HOLD": "🟡 HOLD"}.get(sig["action"])
-    day_str = f"{'+' if sig['day_chg']>=0 else ''}{sig['day_chg']}%"
     sl_price  = round(price * (1 - STOP_LOSS / 100), 2)
     tgt_price = round(price * (1 + sig["target_pct"] / 100), 2) if sig["target_pct"] > 0 else None
+    day_str   = f"{'+' if sig['day_chg']>=0 else ''}{sig['day_chg']}%"
 
-    # Portfolio columns
     in_portfolio = nse in portfolio_map
     if in_portfolio:
         p        = portfolio_map[nse]
@@ -160,41 +169,51 @@ for etf in ALL_ETFS:
         units    = p["units"]
         pnl_pct  = round((price - avg) / avg * 100, 2)
         pnl_rs   = round((price - avg) * units, 0)
-        pnl_str  = f"{'+' if pnl_pct>=0 else ''}{pnl_pct}%"
-        pnlrs_str= f"Rs. {'+' if pnl_rs>=0 else ''}{pnl_rs:,.0f}"
-        avg_str  = f"Rs. {avg}"
-        sl_str   = f"Rs. {sl_price}"
-        tgt_str  = f"Rs. {tgt_price}" if tgt_price else "—"
-        tag      = "✅ My Portfolio"
+        signal   = portfolio_signal(sig["action"], pnl_pct)
+        rows.append({
+            "ETF":          etf["label"],
+            "Symbol":       nse,
+            "Risk":         etf["risk"],
+            "Signal":       signal,
+            "Score":        f"{sig['score']}/3",
+            "Price (Rs.)":  price,
+            "Today %":      day_str,
+            "RSI":          sig["rsi"],
+            "My Units":     units,
+            "Avg Cost":     avg,
+            "P&L %":        f"{'+' if pnl_pct>=0 else ''}{pnl_pct}%",
+            "P&L Rs.":      f"{'+' if pnl_rs>=0 else ''}{pnl_rs:,.0f}",
+            "Stop Loss":    sl_price,
+            "Target":       tgt_price if tgt_price else "—",
+        })
     else:
-        pnl_str = pnlrs_str = avg_str = sl_str = tgt_str = "—"
-        tag = ""
-
-    rows.append({
-        "ETF":        etf["label"],
-        "Symbol":     nse,
-        "Risk":       etf["risk"],
-        "Signal":     signal_icon,
-        "Score":      f"{sig['score']}/3",
-        "Price":      f"Rs. {price}",
-        "Today":      day_str,
-        "RSI":        sig["rsi"],
-        "Avg Cost":   avg_str,
-        "P&L %":      pnl_str,
-        "P&L Rs.":    pnlrs_str,
-        "Stop Loss":  sl_str,
-        "Target":     tgt_str,
-        "Portfolio":  tag,
-    })
+        tech_icon = {"BUY": "🟢 BUY", "SELL": "🔴 SELL", "HOLD": "🟡 HOLD"}.get(sig["action"])
+        rows.append({
+            "ETF":          etf["label"],
+            "Symbol":       nse,
+            "Risk":         etf["risk"],
+            "Signal":       tech_icon,
+            "Score":        f"{sig['score']}/3",
+            "Price (Rs.)":  price,
+            "Today %":      day_str,
+            "RSI":          sig["rsi"],
+            "My Units":     0.0,
+            "Avg Cost":     0.0,
+            "P&L %":        "—",
+            "P&L Rs.":      "—",
+            "Stop Loss":    sl_price,
+            "Target":       tgt_price if tgt_price else "—",
+        })
 
 df_table = pd.DataFrame(rows)
 
-# Style helper
+# Styling
 def color_signal(val):
-    if "BUY"  in str(val): return "color:#28a745;font-weight:700"
-    if "SELL" in str(val): return "color:#dc3545;font-weight:700"
-    if "HOLD" in str(val): return "color:#fd7e14;font-weight:700"
-    return ""
+    v = str(val)
+    if "BUY MORE" in v or v == "🟢 BUY":   return "color:#28a745;font-weight:700"
+    if "SELL" in v or "BOOK" in v:          return "color:#dc3545;font-weight:700"
+    if "HOLD" in v or "WAIT" in v:          return "color:#fd7e14;font-weight:700"
+    return "color:#6c757d"
 
 def color_pnl(val):
     v = str(val)
@@ -203,8 +222,7 @@ def color_pnl(val):
 
 def color_risk(val):
     m = {"Stable": "#28a745", "Aggressive": "#fd7e14", "Very Aggressive": "#dc3545"}
-    c = m.get(val, "#333")
-    return f"color:{c};font-weight:600"
+    return f"color:{m.get(val,'#333')};font-weight:600"
 
 styled = (
     df_table.style
@@ -214,33 +232,56 @@ styled = (
     .set_properties(**{"font-size": "0.88rem"})
 )
 
-st.dataframe(styled, hide_index=True, use_container_width=True, height=370)
+st.caption("💡 **Signal** for your portfolio ETFs is based on your P&L + technical score combined. For others it's pure technical.")
+st.dataframe(styled, hide_index=True, use_container_width=True, height=380)
 
+# ── Inline portfolio editor below table ───────────────────────
 st.divider()
+st.subheader("✏️ Edit My Portfolio")
+st.caption("Change units or avg cost below and hit Save.")
 
-# ── Add to portfolio from table ───────────────────────────────
-not_in_portfolio = [e for e in ALL_ETFS if e["nse_symbol"] not in portfolio_map]
-if not_in_portfolio:
-    st.subheader("Add to My Portfolio")
-    acols = st.columns(min(3, len(not_in_portfolio)))
-    for i, etf in enumerate(not_in_portfolio):
-        with acols[i % 3]:
-            df2 = get_price_data(etf["yf_symbol"])
-            cur_price = round(float(df2["Close"].iloc[-1]), 2) if not df2.empty else 0.0
-            tag_html = (f"<span style='background:{etf['risk_color']};color:#fff;"
-                        f"font-size:0.68rem;font-weight:700;padding:2px 8px;"
-                        f"border-radius:20px'>{etf['risk']}</span>")
-            st.markdown(f"{tag_html} &nbsp; **{etf['label']}** ({etf['nse_symbol']})",
-                        unsafe_allow_html=True)
-            with st.form(key=f"add_{etf['nse_symbol']}"):
-                su = st.number_input("Units",    min_value=0.0, value=0.0,          key=f"su_{etf['nse_symbol']}")
-                sa = st.number_input("Avg cost", min_value=0.0, value=float(cur_price), step=0.01, key=f"sa_{etf['nse_symbol']}")
-                if st.form_submit_button("Add", use_container_width=True):
-                    cur = load_portfolio()
-                    cur.append({"label": etf["label"], "nse_symbol": etf["nse_symbol"],
-                                "yf_symbol": etf["yf_symbol"], "units": su, "avg_cost": sa})
-                    save_portfolio(cur)
-                    st.rerun()
+edit_rows = []
+for etf in ALL_ETFS:
+    p = portfolio_map.get(etf["nse_symbol"])
+    edit_rows.append({
+        "In Portfolio": etf["nse_symbol"] in portfolio_map,
+        "ETF":          etf["label"],
+        "Symbol":       etf["nse_symbol"],
+        "My Units":     float(p["units"])    if p else 0.0,
+        "Avg Cost (Rs.)": float(p["avg_cost"]) if p else 0.0,
+    })
+
+edited = st.data_editor(
+    pd.DataFrame(edit_rows),
+    hide_index=True,
+    use_container_width=True,
+    column_config={
+        "In Portfolio":   st.column_config.CheckboxColumn("In Portfolio"),
+        "ETF":            st.column_config.TextColumn("ETF",    disabled=True),
+        "Symbol":         st.column_config.TextColumn("Symbol", disabled=True),
+        "My Units":       st.column_config.NumberColumn("My Units",       min_value=0.0, step=1.0,    format="%.0f"),
+        "Avg Cost (Rs.)": st.column_config.NumberColumn("Avg Cost (Rs.)", min_value=0.0, step=0.01,   format="%.2f"),
+    },
+    key="portfolio_editor",
+)
+
+if st.button("💾 Save Portfolio Changes", type="primary"):
+    new_portfolio = []
+    for _, row in edited.iterrows():
+        if row["In Portfolio"] and row["My Units"] > 0:
+            # find yf_symbol from ALL_ETFS
+            match = next((e for e in ALL_ETFS if e["nse_symbol"] == row["Symbol"]), None)
+            yf_sym = match["yf_symbol"] if match else row["Symbol"] + ".NS"
+            new_portfolio.append({
+                "label":      row["ETF"],
+                "nse_symbol": row["Symbol"],
+                "yf_symbol":  yf_sym,
+                "units":      float(row["My Units"]),
+                "avg_cost":   float(row["Avg Cost (Rs.)"]),
+            })
+    save_portfolio(new_portfolio)
+    st.success(f"Saved {len(new_portfolio)} ETFs to portfolio!")
+    st.rerun()
 
 st.divider()
 st.caption("For informational use only. Not financial advice.")
