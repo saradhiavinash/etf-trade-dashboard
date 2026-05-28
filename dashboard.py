@@ -148,6 +148,62 @@ portfolio_map = {p["nse_symbol"]: p for p in portfolio}
 
 st.title("📈 ETF Signal Dashboard")
 st.caption(f"{datetime.now().strftime('%d %b %Y, %I:%M %p')} IST  |  Auto-refreshes every 5 min  |  🟢 NSE Live = real-time  🟡 YF ~15m = 15min delayed  ⚪ EOD = prev close")
+
+# ── Portfolio Summary Cards ───────────────────────────────────
+if portfolio:
+    total_invested = 0.0
+    total_current  = 0.0
+    summary_items  = []
+    for p in portfolio:
+        df_p = get_price_data(p["yf_symbol"])
+        if df_p.empty:
+            continue
+        nse_p   = get_nse_price(p["nse_symbol"])
+        yf_p    = get_live_price_yf(p["yf_symbol"]) if not nse_p else None
+        price_p = nse_p or yf_p or round(float(df_p["Close"].iloc[-1]), 2)
+        invested  = round(p["avg_cost"] * p["units"], 2)
+        current   = round(price_p * p["units"], 2)
+        pnl_rs    = round(current - invested, 2)
+        pnl_pct   = round((price_p - p["avg_cost"]) / p["avg_cost"] * 100, 2)
+        total_invested += invested
+        total_current  += current
+        summary_items.append((p["label"], p["nse_symbol"], price_p, pnl_pct, pnl_rs, p["units"], p["avg_cost"]))
+
+    total_pnl    = round(total_current - total_invested, 2)
+    total_pnl_pct = round((total_current - total_invested) / total_invested * 100, 2) if total_invested else 0
+    pnl_color    = "#28a745" if total_pnl >= 0 else "#dc3545"
+    pnl_arrow    = "▲" if total_pnl >= 0 else "▼"
+
+    # Overall summary bar
+    bg    = "#d4edda" if total_pnl >= 0 else "#f8d7da"
+    st.markdown(f'''
+    <div style="background:{bg};padding:14px 20px;border-radius:10px;border-left:6px solid {pnl_color};display:flex;gap:40px;flex-wrap:wrap;margin-bottom:10px">
+        <div><div style="font-size:0.8rem;color:#555">Total Invested</div>
+             <div style="font-size:1.3rem;font-weight:700">&#8377;{total_invested:,.0f}</div></div>
+        <div><div style="font-size:0.8rem;color:#555">Current Value</div>
+             <div style="font-size:1.3rem;font-weight:700">&#8377;{total_current:,.0f}</div></div>
+        <div><div style="font-size:0.8rem;color:#555">Overall P&amp;L</div>
+             <div style="font-size:1.3rem;font-weight:700;color:{pnl_color}">{pnl_arrow} &#8377;{abs(total_pnl):,.0f} ({abs(total_pnl_pct)}%)</div></div>
+        <div><div style="font-size:0.8rem;color:#555">Holdings</div>
+             <div style="font-size:1.3rem;font-weight:700">{len(summary_items)} ETFs</div></div>
+    </div>
+    ''', unsafe_allow_html=True)
+
+    # Per-ETF mini cards
+    cols_s = st.columns(len(summary_items)) if len(summary_items) <= 4 else st.columns(4)
+    for i, (label, sym, price_p, pnl_pct, pnl_rs, units, avg) in enumerate(summary_items):
+        c = "#28a745" if pnl_pct >= 0 else "#dc3545"
+        a = "▲" if pnl_pct >= 0 else "▼"
+        with cols_s[i % len(cols_s)]:
+            st.markdown(f'''
+            <div style="background:#f8f9fa;border-radius:8px;padding:10px 14px;border-top:4px solid {c};margin-bottom:4px">
+                <div style="font-size:0.75rem;color:#666">{sym}</div>
+                <div style="font-size:1rem;font-weight:700">&#8377;{price_p}</div>
+                <div style="font-size:0.85rem;color:{c};font-weight:600">{a} {abs(pnl_pct)}% &nbsp;&middot;&nbsp; &#8377;{abs(pnl_rs):,.0f}</div>
+                <div style="font-size:0.75rem;color:#888">{units} units @ &#8377;{avg}</div>
+            </div>
+            ''', unsafe_allow_html=True)
+
 st.divider()
 
 # Build rows
