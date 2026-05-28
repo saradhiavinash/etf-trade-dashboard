@@ -50,9 +50,36 @@ ALL_ETFS = [
 BASE_TARGET = 3.0
 STOP_LOSS   = 2.0
 
-@st.cache_data(ttl=60)   # refreshes every 60s
-def get_live_price(symbol):
-    """fast_info.last_price is the most current price yfinance provides (~15 min NSE delay)."""
+import requests
+
+# NSE India requires a session cookie obtained by hitting the homepage first
+_NSE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.nseindia.com/",
+}
+
+@st.cache_data(ttl=30)   # NSE price cached 30s — near real-time
+def get_nse_price(nse_symbol):
+    """Fetch live LTP from NSE India public API (~real-time, no login needed)."""
+    try:
+        session = requests.Session()
+        session.get("https://www.nseindia.com", headers=_NSE_HEADERS, timeout=5)
+        url  = f"https://www.nseindia.com/api/quote-equity?symbol={nse_symbol}"
+        resp = session.get(url, headers=_NSE_HEADERS, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            ltp  = data.get("priceInfo", {}).get("lastPrice")
+            if ltp and float(ltp) > 0:
+                return round(float(ltp), 2)
+    except Exception:
+        pass
+    return None
+
+@st.cache_data(ttl=60)
+def get_live_price_yf(symbol):
+    """Fallback: yfinance fast_info (~15 min delay)."""
     try:
         fi = yf.Ticker(symbol).fast_info
         p  = float(fi["last_price"])
@@ -60,7 +87,6 @@ def get_live_price(symbol):
             return round(p, 2)
     except Exception:
         pass
-    # fallback: latest 1-min candle
     try:
         df = yf.Ticker(symbol).history(period="1d", interval="1m")
         if not df.empty:
@@ -127,7 +153,7 @@ portfolio     = load_portfolio()
 portfolio_map = {p["nse_symbol"]: p for p in portfolio}
 
 st.title("📈 ETF Signal Dashboard")
-st.caption(f"{datetime.now().strftime('%d %b %Y, %I:%M %p')} IST  |  Auto-refreshes every 5 min  |  ⚠️ Prices have ~15 min NSE delay (Yahoo Finance limitation)")
+st.caption(f"{datetime.now().strftime('%d %b %Y, %I:%M %p')} IST  |  Auto-refreshes every 5 min  |  🟢 NSE Live = real-time  🟡 YF ~15m = 15min delayed  ⚪ EOD = prev close")
 st.divider()
 
 # Build rows
@@ -137,8 +163,10 @@ for etf in ALL_ETFS:
     if df.empty:
         continue
     sig        = compute_signals(df)
-    live_price = get_live_price(etf["yf_symbol"])
-    price      = live_price if live_price else sig["price"]
+    nse_price  = get_nse_price(etf["nse_symbol"])
+    yf_price   = get_live_price_yf(etf["yf_symbol"]) if not nse_price else None
+    price      = nse_price or yf_price or sig["price"]
+    price_src  = "🟢 NSE Live" if nse_price else ("🟡 YF ~15m" if yf_price else "⚪ EOD")
     nse   = etf["nse_symbol"]
     sl_price  = round(price * (1 - STOP_LOSS / 100), 2)
     tgt_price = round(price * (1 + sig["target_pct"] / 100), 2) if sig["target_pct"] > 0 else None
@@ -165,6 +193,7 @@ for etf in ALL_ETFS:
             "Avg Cost":     avg,
             "P&L %":        f"{'+' if pnl_pct>=0 else ''}{pnl_pct}%",
             "P&L Rs.":      f"{'+' if pnl_rs>=0 else ''}{pnl_rs:,.0f}",
+            "Src":          price_src,
             "Buy Prob %":   sig["buy_prob"],
             "Stop Loss":    sl_price,
             "Target":       tgt_price if tgt_price else "—",
@@ -184,6 +213,7 @@ for etf in ALL_ETFS:
             "Avg Cost":     0.0,
             "P&L %":        "—",
             "P&L Rs.":      "—",
+            "Src":          price_src,
             "Buy Prob %":   sig["buy_prob"],
             "Stop Loss":    sl_price,
             "Target":       tgt_price if tgt_price else "—",
@@ -216,12 +246,19 @@ def color_prob(val):
         else:         return "color:#dc3545;font-weight:700"   # red
     except: return ""
 
+def color_src(val):
+    v = str(val)
+    if "NSE" in v:  return "color:#28a745;font-weight:600"
+    if "YF"  in v:  return "color:#fd7e14;font-weight:600"
+    return "color:#6c757d"
+
 styled = (
     df_table.style
     .map(color_signal, subset=["Signal"])
     .map(color_pnl,    subset=["P&L %", "P&L Rs."])
     .map(color_risk,   subset=["Risk"])
     .map(color_prob,   subset=["Buy Prob %"])
+    .map(color_src,    subset=["Src"])
     .set_properties(**{"font-size": "0.88rem"})
 )
 
