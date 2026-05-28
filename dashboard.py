@@ -208,9 +208,9 @@ def color_risk(val):
 
 styled = (
     df_table.style
-    .applymap(color_signal, subset=["Signal"])
-    .applymap(color_pnl,    subset=["P&L %", "P&L Rs."])
-    .applymap(color_risk,   subset=["Risk"])
+    .map(color_signal, subset=["Signal"])
+    .map(color_pnl,    subset=["P&L %", "P&L Rs."])
+    .map(color_risk,   subset=["Risk"])
     .set_properties(**{"font-size": "0.88rem"})
 )
 
