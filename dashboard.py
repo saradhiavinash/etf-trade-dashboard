@@ -8,7 +8,7 @@ from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(page_title="ETF Signals", page_icon="📈",
-                   layout="wide", initial_sidebar_state="expanded")
+                   layout="wide", initial_sidebar_state="collapsed")
 
 st_autorefresh(interval=300_000, key="autorefresh")
 
@@ -95,51 +95,8 @@ def portfolio_signal(technical_action, pnl_pct):
     else:  # loss
         return "🟡 HOLD (wait)" if technical_action == "BUY"  else "⚪ WAIT / AVOID AVERAGING"
 
-# ── Sidebar: sidebar collapsed by default on mobile ──────────
-with st.sidebar:
-    st.header("My Portfolio")
-    portfolio = load_portfolio()
-
-    updated = []
-    remove_idx = None
-    for i, p in enumerate(portfolio):
-        c1, c2 = st.columns([4, 1])
-        with c1: st.markdown(f"**{p['label']}**")
-        with c2:
-            if st.button("🗑", key=f"rm_{i}", help="Remove"): remove_idx = i
-        units    = st.number_input("Units",         value=float(p["units"]),    min_value=0.0,            key=f"u_{i}")
-        avg_cost = st.number_input("Avg cost (Rs.)",value=float(p["avg_cost"]), min_value=0.0, step=0.01, key=f"a_{i}")
-        updated.append({**p, "units": units, "avg_cost": avg_cost})
-        st.divider()
-
-    if remove_idx is not None:
-        updated.pop(remove_idx)
-        save_portfolio(updated)
-        st.rerun()
-
-    with st.expander("➕ Add new ETF"):
-        new_label = st.text_input("Name",            placeholder="e.g. Nifty BeES")
-        new_nse   = st.text_input("NSE Symbol",      placeholder="e.g. NIFTYBEES")
-        new_units = st.number_input("Units",          min_value=0.0, value=0.0, key="nu")
-        new_avg   = st.number_input("Avg cost (Rs.)", min_value=0.0, value=0.0, step=0.01, key="na")
-        if st.button("Add to Portfolio", use_container_width=True):
-            if new_label and new_nse:
-                updated.append({"label": new_label, "nse_symbol": new_nse.upper().strip(),
-                                 "yf_symbol": new_nse.upper().strip() + ".NS",
-                                 "units": new_units, "avg_cost": new_avg})
-                save_portfolio(updated)
-                st.rerun()
-            else:
-                st.warning("Enter Name and NSE Symbol.")
-
-    if st.button("💾 Save Changes", use_container_width=True, type="primary"):
-        if remove_idx is None:
-            save_portfolio(updated)
-            st.success("Saved!")
-            st.rerun()
-
-    st.divider()
-    st.caption(f"Auto-refreshes every 5 min | {datetime.now().strftime('%I:%M %p')}")
+# ── Hide sidebar toggle arrow ────────────────────────────────
+st.markdown('<style>[data-testid="collapsedControl"]{display:none}</style>', unsafe_allow_html=True)
 
 # ── Main ──────────────────────────────────────────────────────
 portfolio     = load_portfolio()
