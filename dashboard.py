@@ -83,21 +83,49 @@ with st.sidebar:
     portfolio = load_portfolio()
 
     updated = []
+    remove_idx = None
     for i, p in enumerate(portfolio):
-        st.markdown(f"**{p['label']}**")
-        units    = st.number_input("Units held", value=float(p["units"]),   min_value=0.0, key=f"units_{i}")
-        avg_cost = st.number_input("Avg cost (Rs.)", value=float(p["avg_cost"]), min_value=0.0, step=0.01, key=f"avg_{i}")
+        c1, c2 = st.columns([4, 1])
+        with c1:
+            st.markdown(f"**{p['label']}**")
+        with c2:
+            if st.button("🗑", key=f"rm_{i}", help="Remove this ETF"):
+                remove_idx = i
+        units    = st.number_input("Units held",     value=float(p["units"]),    min_value=0.0,             key=f"units_{i}")
+        avg_cost = st.number_input("Avg cost (Rs.)", value=float(p["avg_cost"]), min_value=0.0, step=0.01,  key=f"avg_{i}")
         updated.append({**p, "units": units, "avg_cost": avg_cost})
-        if i < len(portfolio) - 1:
-            st.divider()
+        st.divider()
 
-    if st.button("💾 Save Portfolio", use_container_width=True, type="primary"):
+    if remove_idx is not None:
+        updated.pop(remove_idx)
         save_portfolio(updated)
-        st.success("Saved!")
         st.rerun()
 
+    # ── Add new ETF ──────────────────────────────────────
+    with st.expander("➕ Add new ETF"):
+        new_label  = st.text_input("Name",              placeholder="e.g. Nifty BeES")
+        new_nse    = st.text_input("NSE Symbol",        placeholder="e.g. NIFTYBEES")
+        new_units  = st.number_input("Units held",      min_value=0.0, value=0.0, key="new_units")
+        new_avg    = st.number_input("Avg cost (Rs.)",  min_value=0.0, value=0.0, step=0.01, key="new_avg")
+        if st.button("Add to Portfolio", use_container_width=True):
+            if new_label and new_nse:
+                yf_sym = new_nse.upper().strip() + ".NS"
+                updated.append({"label": new_label, "nse_symbol": new_nse.upper().strip(),
+                                 "yf_symbol": yf_sym, "units": new_units, "avg_cost": new_avg})
+                save_portfolio(updated)
+                st.success(f"Added {new_label}!")
+                st.rerun()
+            else:
+                st.warning("Enter Name and NSE Symbol.")
+
+    if st.button("💾 Save Changes", use_container_width=True, type="primary"):
+        if remove_idx is None:
+            save_portfolio(updated)
+            st.success("Saved!")
+            st.rerun()
+
     st.divider()
-    st.caption(f"Auto-refreshes every 5 min")
+    st.caption("Auto-refreshes every 5 min")
     st.caption(f"Last loaded: {datetime.now().strftime('%I:%M %p')}")
 
 # ── Main Dashboard ────────────────────────────────────────────
@@ -157,4 +185,59 @@ for p in portfolio:
 
     st.divider()
 
+# ── Suggested ETFs ───────────────────────────────────────────
+st.divider()
+st.subheader("Suggested ETFs")
+st.caption("Top picks to consider adding to your portfolio")
+
+SUGGESTED = [
+    {"label": "Nifty BeES",  "nse_symbol": "NIFTYBEES", "yf_symbol": "NIFTYBEES.NS",
+     "risk": "Stable",       "risk_color": "#28a745",
+     "why": "Tracks Nifty 50. Best benchmark — if your ETFs can't beat this, just hold it."},
+    {"label": "Gold BeES",   "nse_symbol": "GOLDBEES",  "yf_symbol": "GOLDBEES.NS",
+     "risk": "Hedge",        "risk_color": "#fd7e14",
+     "why": "Tracks gold price. Rises when market falls — good portfolio balance."},
+]
+
+portfolio_symbols = [p["nse_symbol"] for p in load_portfolio()]
+
+scols = st.columns(len(SUGGESTED))
+for scol, s in zip(scols, SUGGESTED):
+    with scol:
+        sdf = get_price_data(s["yf_symbol"])
+        if sdf.empty:
+            st.warning(f"No data: {s['nse_symbol']}")
+            continue
+        ssig = compute_signals(sdf)
+        sbadge = {"BUY": "🟢 BUY", "SELL": "🔴 SELL", "HOLD": "🟡 HOLD"}.get(ssig["action"])
+        sday   = f"{'+' if ssig['day_chg']>=0 else ''}{ssig['day_chg']}%"
+        already = s["nse_symbol"] in portfolio_symbols
+
+        st.markdown(
+            f"<div style='border:1px solid #dee2e6;border-radius:10px;padding:14px;'>"
+            f"<span style='background:{s['risk_color']};color:#fff;font-size:0.72rem;"
+            f"font-weight:700;padding:2px 8px;border-radius:20px'>{s['risk']}</span>"
+            f"<div style='font-size:1rem;font-weight:700;margin:8px 0 2px'>{s['label']}  <span style='color:#888;font-size:0.8rem'>{s['nse_symbol']}</span></div>"
+            f"<div>{sbadge} &nbsp; Score: {ssig['score']}/3 &nbsp; RSI: {ssig['rsi']}</div>"
+            f"<div style='font-size:1.1rem;font-weight:600;margin:4px 0'>Rs. {ssig['price']} <span style='font-size:0.85rem;color:gray'>({sday})</span></div>"
+            f"<div style='font-size:0.82rem;color:#555;margin-top:6px'>{s['why']}</div>"
+            f"</div>",
+            unsafe_allow_html=True)
+
+        st.markdown("")
+        if already:
+            st.success("Already in your portfolio", icon="✅")
+        else:
+            with st.form(key=f"add_form_{s['nse_symbol']}"):
+                su = st.number_input("Units",    min_value=0.0, value=0.0, key=f"su_{s['nse_symbol']}")
+                sa = st.number_input("Avg cost", min_value=0.0, value=float(ssig["price"]), step=0.01, key=f"sa_{s['nse_symbol']}")
+                if st.form_submit_button(f"Add {s['nse_symbol']} to Portfolio", use_container_width=True):
+                    current = load_portfolio()
+                    current.append({"label": s["label"], "nse_symbol": s["nse_symbol"],
+                                    "yf_symbol": s["yf_symbol"], "units": su, "avg_cost": sa})
+                    save_portfolio(current)
+                    st.success(f"Added {s['label']}!")
+                    st.rerun()
+
+st.divider()
 st.caption("For informational use only. Not financial advice.")
