@@ -4,6 +4,7 @@ import yfinance as yf
 import ta
 import json
 import os
+import requests
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 
@@ -22,7 +23,47 @@ DEFAULT_PORTFOLIO = [
      "yf_symbol": "PSUBNKBEES.NS", "units": 364, "avg_cost": 97.51},
 ]
 
+# ── GitHub portfolio helpers ──────────────────────────────────
+_GH_TOKEN = st.secrets.get("GITHUB_TOKEN", os.getenv("GITHUB_TOKEN", ""))
+_GH_REPO  = st.secrets.get("GITHUB_REPO",  os.getenv("GITHUB_REPO",  "saradhiavinash/etf-trade-dashboard"))
+_GH_FILE  = "portfolio.json"
+_GH_API   = f"https://api.github.com/repos/{_GH_REPO}/contents/{_GH_FILE}"
+
+def _gh_headers():
+    return {"Authorization": f"token {_GH_TOKEN}", "Accept": "application/vnd.github.v3+json"}
+
+def load_portfolio_github():
+    """Load portfolio.json directly from GitHub repo."""
+    try:
+        import base64
+        r = requests.get(_GH_API, headers=_gh_headers(), timeout=6)
+        if r.status_code == 200:
+            content = base64.b64decode(r.json()["content"]).decode("utf-8")
+            return json.loads(content)
+    except Exception:
+        pass
+    return None
+
+def save_portfolio_github(data):
+    """Save portfolio.json back to GitHub repo (creates a commit)."""
+    try:
+        import base64
+        # get current SHA (needed for update)
+        r = requests.get(_GH_API, headers=_gh_headers(), timeout=6)
+        sha = r.json().get("sha", "") if r.status_code == 200 else ""
+        content = base64.b64encode(json.dumps(data, indent=2).encode()).decode()
+        payload = {"message": "Update portfolio via dashboard",
+                   "content": content, "sha": sha}
+        r2 = requests.put(_GH_API, headers=_gh_headers(), json=payload, timeout=6)
+        return r2.status_code in (200, 201)
+    except Exception:
+        return False
+
 def load_portfolio():
+    # try GitHub first, then local file, then default
+    gh = load_portfolio_github()
+    if gh:
+        return gh
     if os.path.exists(PORTFOLIO_FILE):
         try:
             with open(PORTFOLIO_FILE, "r") as f:
@@ -32,6 +73,8 @@ def load_portfolio():
     return DEFAULT_PORTFOLIO
 
 def save_portfolio(data):
+    # save to GitHub + local
+    save_portfolio_github(data)
     with open(PORTFOLIO_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
@@ -49,8 +92,6 @@ ALL_ETFS = [
 
 BASE_TARGET = 3.0
 STOP_LOSS   = 2.0
-
-import requests
 
 # NSE India requires a session cookie obtained by hitting the homepage first
 _NSE_HEADERS = {
@@ -295,11 +336,10 @@ edited = st.data_editor(
     key="portfolio_editor",
 )
 
-if st.button("💾 Save Portfolio Changes", type="primary"):
+if st.button("💾 Save Portfolio to GitHub", type="primary"):
     new_portfolio = []
     for _, row in edited.iterrows():
         if row["In Portfolio"] and row["My Units"] > 0:
-            # find yf_symbol from ALL_ETFS
             match = next((e for e in ALL_ETFS if e["nse_symbol"] == row["Symbol"]), None)
             yf_sym = match["yf_symbol"] if match else row["Symbol"] + ".NS"
             new_portfolio.append({
@@ -309,8 +349,14 @@ if st.button("💾 Save Portfolio Changes", type="primary"):
                 "units":      float(row["My Units"]),
                 "avg_cost":   float(row["Avg Cost (Rs.)"]),
             })
-    save_portfolio(new_portfolio)
-    st.success(f"Saved {len(new_portfolio)} ETFs to portfolio!")
+    ok = save_portfolio_github(new_portfolio)
+    # also save locally
+    with open(PORTFOLIO_FILE, "w") as f:
+        json.dump(new_portfolio, f, indent=2)
+    if ok:
+        st.success(f"✅ Saved {len(new_portfolio)} ETFs to GitHub! Changes are permanent.")
+    else:
+        st.warning(f"⚠️ Saved locally only — GitHub save failed (check GITHUB_TOKEN in Secrets).")
     st.rerun()
 
 st.divider()
