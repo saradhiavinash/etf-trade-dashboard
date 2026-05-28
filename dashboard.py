@@ -79,8 +79,13 @@ def compute_signals(df):
         action = "SELL"; target_pct = 0.0
     else:
         action = "HOLD"; target_pct = 0.0
+    # Buy probability: score base + RSI distance from oversold + MACD direction
+    score_base = {-3: 10, -2: 20, -1: 35, 0: 45, 1: 55, 2: 68, 3: 83}[score]
+    rsi_bonus  = round((50 - rsi_val) * 0.3)   # oversold RSI → higher prob; overbought → lower
+    macd_bonus = 5 if macd_v > macd_s else -5
+    buy_prob   = min(95, max(5, score_base + rsi_bonus + macd_bonus))
     return dict(price=price, day_chg=day_chg, rsi=rsi_val,
-                score=score, action=action, target_pct=target_pct)
+                score=score, action=action, target_pct=target_pct, buy_prob=buy_prob)
 
 def portfolio_signal(technical_action, pnl_pct):
     """Smart signal for ETFs you own — combines P&L with technical."""
@@ -140,6 +145,7 @@ for etf in ALL_ETFS:
             "Avg Cost":     avg,
             "P&L %":        f"{'+' if pnl_pct>=0 else ''}{pnl_pct}%",
             "P&L Rs.":      f"{'+' if pnl_rs>=0 else ''}{pnl_rs:,.0f}",
+            "Buy Prob %":   sig["buy_prob"],
             "Stop Loss":    sl_price,
             "Target":       tgt_price if tgt_price else "—",
         })
@@ -158,6 +164,7 @@ for etf in ALL_ETFS:
             "Avg Cost":     0.0,
             "P&L %":        "—",
             "P&L Rs.":      "—",
+            "Buy Prob %":   sig["buy_prob"],
             "Stop Loss":    sl_price,
             "Target":       tgt_price if tgt_price else "—",
         })
@@ -181,11 +188,20 @@ def color_risk(val):
     m = {"Stable": "#28a745", "Aggressive": "#fd7e14", "Very Aggressive": "#dc3545"}
     return f"color:{m.get(val,'#333')};font-weight:600"
 
+def color_prob(val):
+    try:
+        v = int(val)
+        if v >= 70:   return "color:#28a745;font-weight:700"   # green
+        elif v >= 50: return "color:#fd7e14;font-weight:700"   # orange
+        else:         return "color:#dc3545;font-weight:700"   # red
+    except: return ""
+
 styled = (
     df_table.style
     .map(color_signal, subset=["Signal"])
     .map(color_pnl,    subset=["P&L %", "P&L Rs."])
     .map(color_risk,   subset=["Risk"])
+    .map(color_prob,   subset=["Buy Prob %"])
     .set_properties(**{"font-size": "0.88rem"})
 )
 
