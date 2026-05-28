@@ -46,25 +46,6 @@ ALL_ETFS = [
 BASE_TARGET = 3.0
 STOP_LOSS   = 2.0
 
-WEEKLY_TARGET_OPTIONS = {
-    "0.5% — Very low (safe but barely worth it)": 0.5,
-    "1.0% — Conservative ✅ (achievable most weeks)": 1.0,
-    "1.5% — Balanced ✅ (best risk/reward)": 1.5,
-    "2.0% — Aggressive ⚠️ (hard to hit every week)": 2.0,
-    "3.0% — Very aggressive ❌ (expect many misses)": 3.0,
-}
-
-def get_week_open(df):
-    # Return the price at the start of the current calendar week (nearest trading day).
-    today      = pd.Timestamp.now(tz=df.index.tz).normalize()
-    days_back  = today.dayofweek          # Mon=0, Tue=1 … Fri=4, Sat=5, Sun=6
-    week_start = today - pd.Timedelta(days=days_back)
-    week_df    = df[df.index.normalize() >= week_start]
-    if week_df.empty:
-        week_df = df  # fallback: full history
-    col = "Open" if "Open" in week_df.columns else "Close"
-    return round(float(week_df[col].iloc[0]), 2)
-
 # NSE India requires a session cookie obtained by hitting the homepage first
 _NSE_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -154,17 +135,23 @@ def compute_signals(df, avg_cost=None):
                 score=score, action=action, target_pct=target_pct, buy_prob=buy_prob)
 
 def portfolio_signal(technical_action, pnl_pct):
-    """Smart signal for ETFs you own — combines P&L with technical."""
-    if pnl_pct >= 15:
-        return "🔴 BOOK PROFIT" if technical_action in ("SELL", "HOLD") else "🟡 HOLD (trailing SL)"
+    # Smart signal: P&L thresholds are the primary driver
+    if pnl_pct >= 20:
+        return "🔴 BOOK PROFIT (20%+)"
+    elif pnl_pct >= 12:
+        return "🔴 BOOK PROFIT"
     elif pnl_pct >= 8:
-        return "🔴 SELL NOW"   if technical_action == "SELL" else "🟡 HOLD (protect gains)"
-    elif pnl_pct >= 3:
-        return "🟢 BUY MORE"   if technical_action == "BUY"  else "🟡 HOLD"
+        return "🔴 SELL — Lock in Gains" if technical_action in ("SELL", "HOLD") else "🟡 HOLD (trailing SL)"
+    elif pnl_pct >= 5:
+        return "🔴 SELL NOW" if technical_action == "SELL" else "🟡 HOLD (protect gains)"
+    elif pnl_pct >= 2:
+        return "🟢 BUY MORE" if technical_action == "BUY" else "🟡 HOLD"
     elif pnl_pct >= 0:
-        return "🟢 BUY MORE"   if technical_action == "BUY"  else "🟡 HOLD (near breakeven)"
-    else:  # loss
-        return "🟡 HOLD (wait)" if technical_action == "BUY"  else "⚪ WAIT / AVOID AVERAGING"
+        return "🟢 BUY MORE" if technical_action == "BUY" else "🟡 HOLD (near breakeven)"
+    elif pnl_pct >= -5:  # small loss
+        return "🟢 BUY MORE (avg down)" if technical_action == "BUY" else "🟡 HOLD (wait)"
+    else:  # big loss
+        return "🟢 BUY MORE (avg down)" if technical_action == "BUY" else "⚪ AVOID — Cut Loss?"
 
 # ── Hide sidebar toggle arrow ────────────────────────────────
 st.markdown('<style>[data-testid="collapsedControl"]{display:none}</style>', unsafe_allow_html=True)
@@ -176,22 +163,6 @@ portfolio_map = {p["nse_symbol"]: p for p in portfolio}
 st.title("📈 ETF Signal Dashboard")
 st.caption(f"{datetime.now().strftime('%d %b %Y, %I:%M %p')} IST  |  Auto-refreshes every 5 min  |  🟢 NSE Live = real-time  🟡 YF ~15m = 15min delayed  ⚪ EOD = prev close")
 
-# ── Weekly Target Selector ───────────────────────────────────
-if "weekly_target_label" not in st.session_state:
-    st.session_state["weekly_target_label"] = "1.5% — Balanced ✅ (best risk/reward)"
-
-_wt_col, _ = st.columns([2, 5])
-with _wt_col:
-    chosen_label = st.selectbox(
-        "🎯 My Weekly Gain Target",
-        options=list(WEEKLY_TARGET_OPTIONS.keys()),
-        index=list(WEEKLY_TARGET_OPTIONS.keys()).index(st.session_state["weekly_target_label"]),
-        help="Dashboard will show BUY when entry looks good and BOOK PROFIT when this week's gain hits your target.",
-    )
-    st.session_state["weekly_target_label"] = chosen_label
-    WEEKLY_TARGET = WEEKLY_TARGET_OPTIONS[chosen_label]
-
-st.caption(f"📌 Target this week: **+{WEEKLY_TARGET}%** per ETF  |  'Wk Signal' column shows weekly buy/sell status")
 
 # ── Portfolio Summary Cards ───────────────────────────────────
 if portfolio:
@@ -267,22 +238,6 @@ for etf in ALL_ETFS:
     tgt_price = round(price * (1 + sig["target_pct"] / 100), 2) if sig["target_pct"] > 0 else None
     day_str   = f"{'+' if sig['day_chg']>=0 else ''}{sig['day_chg']}%"
 
-    week_open  = get_week_open(df)
-    week_pct   = round((price - week_open) / week_open * 100, 2) if week_open else 0.0
-    week_str   = f"{'+' if week_pct>=0 else ''}{week_pct}%"
-
-    # ── Signal: weekly target is the override, technicals fill the rest ──
-    if week_pct >= WEEKLY_TARGET:
-        signal = "🔴 BOOK PROFIT"
-    elif week_pct <= -0.5 and sig["action"] == "BUY":
-        signal = "🟢 BUY (weekly dip)"
-    elif sig["action"] == "BUY":
-        signal = "🟢 BUY"
-    elif sig["action"] == "SELL":
-        signal = "🔴 SELL / EXIT"
-    else:
-        signal = "🟡 HOLD"
-
     in_portfolio = nse in portfolio_map
     if in_portfolio:
         p       = portfolio_map[nse]
@@ -290,15 +245,12 @@ for etf in ALL_ETFS:
         units   = p["units"]
         pnl_pct = round((price - avg) / avg * 100, 2)
         pnl_rs  = round((price - avg) * units, 0)
-        # Weekly target hit overrides portfolio signal
-        if week_pct < WEEKLY_TARGET:
-            signal = portfolio_signal(sig["action"], pnl_pct)
+        signal  = portfolio_signal(sig["action"], pnl_pct)
         rows.append({
             "ETF":          etf["label"],
             "Symbol":       nse,
             "Risk":         etf["risk"],
             "Signal":       signal,
-            "Week %":       week_str,
             "Score":        f"{sig['score']}/3",
             "Price (Rs.)":  price,
             "Today %":      day_str,
@@ -313,12 +265,12 @@ for etf in ALL_ETFS:
             "Target":       tgt_price if tgt_price else "—",
         })
     else:
+        tech_icon = {"BUY": "🟢 BUY", "SELL": "🔴 SELL", "HOLD": "🟡 HOLD"}.get(sig["action"])
         rows.append({
             "ETF":          etf["label"],
             "Symbol":       nse,
             "Risk":         etf["risk"],
-            "Signal":       signal,
-            "Week %":       week_str,
+            "Signal":       tech_icon,
             "Score":        f"{sig['score']}/3",
             "Price (Rs.)":  price,
             "Today %":      day_str,
@@ -374,7 +326,6 @@ def color_week_pct(val):
 styled = (
     df_table.style
     .map(color_signal,    subset=["Signal"])
-    .map(color_week_pct,  subset=["Week %"])
     .map(color_pnl,       subset=["P&L %", "P&L Rs."])
     .map(color_risk,      subset=["Risk"])
     .map(color_prob,      subset=["Buy Prob %"])
@@ -382,7 +333,7 @@ styled = (
     .set_properties(**{"font-size": "0.88rem"})
 )
 
-st.caption("💡 **Signal** = driven by your weekly target above. When weekly gain hits target → 🔴 BOOK PROFIT. Below target: technicals + P&L decide BUY/HOLD/SELL.  **Week %** = gain since this week's open.")
+st.caption("💡 **Signal** for your holdings = driven by your actual P&L%. Hit 12%+ → 🔴 BOOK PROFIT automatically. For watchlist ETFs = pure technical signal.")
 st.dataframe(styled, hide_index=True, use_container_width=True, height=380)
 
 # ── Inline portfolio editor below table ───────────────────────
