@@ -14,8 +14,6 @@ st.set_page_config(page_title="ETF Signals", page_icon="📈",
 st_autorefresh(interval=300_000, key="autorefresh")
 
 # ── Portfolio helpers ─────────────────────────────────────────
-PORTFOLIO_FILE = "portfolio.json"
-
 DEFAULT_PORTFOLIO = [
     {"label": "HDFC Smallcap 250 ETF", "nse_symbol": "HDFCSML250",
      "yf_symbol": "HDFCSML250.NS", "units": 131, "avg_cost": 150.96},
@@ -23,60 +21,15 @@ DEFAULT_PORTFOLIO = [
      "yf_symbol": "PSUBNKBEES.NS", "units": 364, "avg_cost": 97.51},
 ]
 
-# ── GitHub portfolio helpers ──────────────────────────────────
-_GH_TOKEN = st.secrets.get("GITHUB_TOKEN", os.getenv("GITHUB_TOKEN", ""))
-_GH_REPO  = st.secrets.get("GITHUB_REPO",  os.getenv("GITHUB_REPO",  "saradhiavinash/etf-trade-dashboard"))
-_GH_FILE  = "portfolio.json"
-_GH_API   = f"https://api.github.com/repos/{_GH_REPO}/contents/{_GH_FILE}"
-
-def _gh_headers():
-    return {"Authorization": f"token {_GH_TOKEN}", "Accept": "application/vnd.github.v3+json"}
-
-def load_portfolio_github():
-    """Load portfolio.json directly from GitHub repo."""
-    try:
-        import base64
-        r = requests.get(_GH_API, headers=_gh_headers(), timeout=6)
-        if r.status_code == 200:
-            content = base64.b64decode(r.json()["content"]).decode("utf-8")
-            return json.loads(content)
-    except Exception:
-        pass
-    return None
-
-def save_portfolio_github(data):
-    """Save portfolio.json back to GitHub repo (creates a commit)."""
-    try:
-        import base64
-        # get current SHA (needed for update)
-        r = requests.get(_GH_API, headers=_gh_headers(), timeout=6)
-        sha = r.json().get("sha", "") if r.status_code == 200 else ""
-        content = base64.b64encode(json.dumps(data, indent=2).encode()).decode()
-        payload = {"message": "Update portfolio via dashboard",
-                   "content": content, "sha": sha}
-        r2 = requests.put(_GH_API, headers=_gh_headers(), json=payload, timeout=6)
-        return r2.status_code in (200, 201)
-    except Exception:
-        return False
+# Portfolio lives in session_state — persists until browser window closes
+if "portfolio" not in st.session_state:
+    st.session_state["portfolio"] = DEFAULT_PORTFOLIO
 
 def load_portfolio():
-    # try GitHub first, then local file, then default
-    gh = load_portfolio_github()
-    if gh:
-        return gh
-    if os.path.exists(PORTFOLIO_FILE):
-        try:
-            with open(PORTFOLIO_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return DEFAULT_PORTFOLIO
+    return st.session_state["portfolio"]
 
 def save_portfolio(data):
-    # save to GitHub + local
-    save_portfolio_github(data)
-    with open(PORTFOLIO_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+    st.session_state["portfolio"] = data
 
 # ── All ETFs catalog ──────────────────────────────────────────
 ALL_ETFS = [
@@ -336,7 +289,7 @@ edited = st.data_editor(
     key="portfolio_editor",
 )
 
-if st.button("💾 Save Portfolio to GitHub", type="primary"):
+if st.button("💾 Apply Portfolio Changes", type="primary"):
     new_portfolio = []
     for _, row in edited.iterrows():
         if row["In Portfolio"] and row["My Units"] > 0:
@@ -347,17 +300,39 @@ if st.button("💾 Save Portfolio to GitHub", type="primary"):
                 "nse_symbol": row["Symbol"],
                 "yf_symbol":  yf_sym,
                 "units":      float(row["My Units"]),
-                "avg_cost":   float(row["Avg Cost (Rs.)"]),
+                "avg_cost":   float(row["Avg Cost (Rs.)"])
             })
-    ok = save_portfolio_github(new_portfolio)
-    # also save locally
-    with open(PORTFOLIO_FILE, "w") as f:
-        json.dump(new_portfolio, f, indent=2)
-    if ok:
-        st.success(f"✅ Saved {len(new_portfolio)} ETFs to GitHub! Changes are permanent.")
-    else:
-        st.warning(f"⚠️ Saved locally only — GitHub save failed (check GITHUB_TOKEN in Secrets).")
+    save_portfolio(new_portfolio)
+    st.success(f"✅ Portfolio updated ({len(new_portfolio)} ETFs) — active until window closes.")
     st.rerun()
+
+# ── File Load / Save ─────────────────────────────────────────
+st.divider()
+st.subheader("📂 Load / Save Portfolio File")
+col_load, col_save = st.columns(2)
+
+with col_load:
+    st.caption("📥 Load from JSON file (from your device)")
+    uploaded = st.file_uploader("Choose portfolio JSON", type="json", label_visibility="collapsed")
+    if uploaded:
+        try:
+            data = json.load(uploaded)
+            save_portfolio(data)
+            st.success(f"✅ Loaded {len(data)} ETFs from file!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Invalid file: {e}")
+
+with col_save:
+    st.caption("📤 Save current portfolio to JSON file")
+    portfolio_json = json.dumps(load_portfolio(), indent=2)
+    st.download_button(
+        label="⬇️ Download portfolio.json",
+        data=portfolio_json,
+        file_name="portfolio.json",
+        mime="application/json",
+        use_container_width=True,
+    )
 
 st.divider()
 st.caption("For informational use only. Not financial advice.")
