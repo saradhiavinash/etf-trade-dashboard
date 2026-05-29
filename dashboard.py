@@ -15,6 +15,30 @@ st.set_page_config(page_title="ETF Signals", page_icon="📈",
 
 st_autorefresh(interval=300_000, key="autorefresh")
 
+# ── ETF metadata lookup (risk/label/color for known ETFs) ────────────────────
+ETF_METADATA = {
+    "HDFCSML250":  {"label": "HDFC Smallcap 250 ETF", "yf_symbol": "HDFCSML250.NS",  "risk": "Very Aggressive", "risk_color": "#dc3545"},
+    "PSUBNKBEES":  {"label": "PSU Bank BeES",          "yf_symbol": "PSUBNKBEES.NS",  "risk": "Aggressive",      "risk_color": "#fd7e14"},
+    "NIFTYBEES":   {"label": "Nifty BeES",             "yf_symbol": "NIFTYBEES.NS",   "risk": "Stable",          "risk_color": "#28a745"},
+    "GOLDBEES":    {"label": "Gold BeES",              "yf_symbol": "GOLDBEES.NS",    "risk": "Stable",          "risk_color": "#28a745"},
+    "BANKBEES":    {"label": "Bank BeES",              "yf_symbol": "BANKBEES.NS",    "risk": "Aggressive",      "risk_color": "#fd7e14"},
+    "ITBEES":      {"label": "IT BeES",                "yf_symbol": "ITBEES.NS",      "risk": "Aggressive",      "risk_color": "#fd7e14"},
+    "JUNIORBEES":  {"label": "Junior BeES",            "yf_symbol": "JUNIORBEES.NS",  "risk": "Very Aggressive", "risk_color": "#dc3545"},
+    "MOM100":      {"label": "Momentum 100",           "yf_symbol": "MOM100.NS",      "risk": "Very Aggressive", "risk_color": "#dc3545"},
+    "SILVERBEES":  {"label": "Silver BeES",            "yf_symbol": "SILVERBEES.NS",  "risk": "Aggressive",      "risk_color": "#fd7e14"},
+    "CPSEETF":     {"label": "CPSE ETF",               "yf_symbol": "CPSEETF.NS",     "risk": "Aggressive",      "risk_color": "#fd7e14"},
+    "ICICIB22":    {"label": "Bharat 22 ETF",          "yf_symbol": "ICICIB22.NS",    "risk": "Aggressive",      "risk_color": "#fd7e14"},
+    "SETFNIF50":   {"label": "SBI Nifty 50 ETF",       "yf_symbol": "SETFNIF50.NS",   "risk": "Stable",          "risk_color": "#28a745"},
+    "PHARMABEES":  {"label": "Pharma BeES",            "yf_symbol": "PHARMABEES.NS",  "risk": "Aggressive",      "risk_color": "#fd7e14"},
+}
+
+def etf_meta(sym):
+    """Returns metadata for a symbol, or sensible defaults for unknown ETFs."""
+    m = ETF_METADATA.get(sym)
+    if m:
+        return m
+    return {"label": sym, "yf_symbol": sym + ".NS", "risk": "Aggressive", "risk_color": "#fd7e14"}
+
 # ── Portfolio helpers ─────────────────────────────────────────
 GOOGLE_SHEET_CSV = (
     "https://docs.google.com/spreadsheets/d/"
