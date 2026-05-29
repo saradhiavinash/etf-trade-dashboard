@@ -60,11 +60,6 @@ def load_portfolio():
             return json.load(f)
     return []
 
-def save_portfolio(data):
-    """Saves to local portfolio.json as backup only."""
-    with open(PORTFOLIO_FILE, "w") as f:
-        json.dump(data, f, indent=2)
-
 # ── All ETFs catalog ──────────────────────────────────────────
 ALL_ETFS = [
     {"label": "HDFC Smallcap 250 ETF", "nse_symbol": "HDFCSML250",  "yf_symbol": "HDFCSML250.NS",  "risk": "Very Aggressive", "risk_color": "#dc3545"},
@@ -395,53 +390,6 @@ styled = (
 
 st.caption("💡 **Signal** = partial profit booking at 12% / 18% / 25% P&L.  **Sell Qty** = units to sell at this tranche.  **Trail SL** = 3% below 10-day high — exit if price falls here.")
 st.dataframe(styled, hide_index=True, use_container_width=True, height=380)
-
-# ── Inline portfolio editor below table ───────────────────────
-st.divider()
-st.subheader("✏️ Edit My Portfolio")
-st.caption("Change units or avg cost below and hit Save.")
-
-edit_rows = []
-for etf in ALL_ETFS:
-    p = portfolio_map.get(etf["nse_symbol"])
-    edit_rows.append({
-        "In Portfolio": etf["nse_symbol"] in portfolio_map,
-        "ETF":          etf["label"],
-        "Symbol":       etf["nse_symbol"],
-        "My Units":     float(p["units"])    if p else 0.0,
-        "Avg Cost (Rs.)": float(p["avg_cost"]) if p else 0.0,
-    })
-
-edited = st.data_editor(
-    pd.DataFrame(edit_rows),
-    hide_index=True,
-    use_container_width=True,
-    column_config={
-        "In Portfolio":   st.column_config.CheckboxColumn("In Portfolio"),
-        "ETF":            st.column_config.TextColumn("ETF",    disabled=True),
-        "Symbol":         st.column_config.TextColumn("Symbol", disabled=True),
-        "My Units":       st.column_config.NumberColumn("My Units",       min_value=0.0, step=1.0,    format="%.0f"),
-        "Avg Cost (Rs.)": st.column_config.NumberColumn("Avg Cost (Rs.)", min_value=0.0, step=0.01,   format="%.2f"),
-    },
-    key="portfolio_editor",
-)
-
-if st.button("💾 Apply Portfolio Changes", type="primary"):
-    new_portfolio = []
-    for _, row in edited.iterrows():
-        if row["In Portfolio"] and row["My Units"] > 0:
-            match = next((e for e in ALL_ETFS if e["nse_symbol"] == row["Symbol"]), None)
-            yf_sym = match["yf_symbol"] if match else row["Symbol"] + ".NS"
-            new_portfolio.append({
-                "label":      row["ETF"],
-                "nse_symbol": row["Symbol"],
-                "yf_symbol":  yf_sym,
-                "units":      float(row["My Units"]),
-                "avg_cost":   float(row["Avg Cost (Rs.)"])
-            })
-    save_portfolio(new_portfolio)
-    st.success(f"✅ Portfolio updated ({len(new_portfolio)} ETFs) — active until window closes.")
-    st.rerun()
 
 # ── Portfolio source info ─────────────────────────────────────
 st.divider()
