@@ -60,6 +60,29 @@ def load_portfolio():
             return json.load(f)
     return []
 
+@st.cache_data(ttl=60)
+def load_profit_booked():
+    """Reads 'Profit booked' columns from Google Sheet (cols 5=symbol,6=units,7=sell price)."""
+    try:
+        df = pd.read_csv(GOOGLE_SHEET_CSV, header=None)
+        booked = []
+        for i in range(2, len(df)):
+            row = df.iloc[i]
+            sym = str(row[5]).strip().upper()
+            if not sym or sym in ("NAN", "ETF", ""):
+                continue
+            try:
+                units_sold = float(row[6])
+                sell_price = float(row[7])
+            except (ValueError, TypeError):
+                continue
+            if units_sold <= 0 or sell_price <= 0:
+                continue
+            booked.append({"nse_symbol": sym, "units_sold": units_sold, "sell_price": sell_price})
+        return booked
+    except Exception:
+        return []
+
 # ── All ETFs catalog ──────────────────────────────────────────
 ALL_ETFS = [
     {"label": "HDFC Smallcap 250 ETF", "nse_symbol": "HDFCSML250",  "yf_symbol": "HDFCSML250.NS",  "risk": "Very Aggressive", "risk_color": "#dc3545"},
@@ -203,6 +226,8 @@ st.markdown('<style>[data-testid="collapsedControl"]{display:none}</style>', uns
 # ── Main ──────────────────────────────────────────────────────
 portfolio     = load_portfolio()
 portfolio_map = {p["nse_symbol"]: p for p in portfolio}
+profit_booked = load_profit_booked()
+profit_booked_map = {b["nse_symbol"]: b for b in profit_booked}
 
 st.title("📈 ETF Signal Dashboard")
 st.caption(f"{datetime.now().strftime('%d %b %Y, %I:%M %p')} IST  |  Auto-refreshes every 5 min  |  🟢 NSE Live = real-time  🟡 YF ~15m = 15min delayed  ⚪ EOD = prev close")
@@ -228,25 +253,65 @@ if portfolio:
         total_current  += current
         summary_items.append((p["label"], p["nse_symbol"], price_p, pnl_pct, pnl_rs, p["units"], p["avg_cost"]))
 
+    # Realized profit from booked trades
+    total_realized = 0.0
+    realized_rows  = []
+    for b in profit_booked:
+        sym = b["nse_symbol"]
+        # find avg_cost for this symbol from portfolio OR summary_items
+        avg_c = portfolio_map[sym]["avg_cost"] if sym in portfolio_map else None
+        if avg_c is None:
+            # try summary_items
+            for lbl, s, pr, pp, prs, u, av in summary_items:
+                if s == sym:
+                    avg_c = av
+                    break
+        realized_pnl = round((b["sell_price"] - (avg_c or 0)) * b["units_sold"], 2)
+        total_realized += realized_pnl
+        realized_rows.append((sym, b["units_sold"], b["sell_price"], realized_pnl))
+
+    total_realized   = round(total_realized, 2)
+    total_gain       = round(total_pnl + total_realized, 2)
+    total_cost_basis = total_invested + sum(
+        (portfolio_map[b["nse_symbol"]]["avg_cost"] if b["nse_symbol"] in portfolio_map else 0) * b["units_sold"]
+        for b in profit_booked
+    )
+    total_gain_pct   = round(total_gain / total_cost_basis * 100, 2) if total_cost_basis else 0
+
     total_pnl    = round(total_current - total_invested, 2)
     total_pnl_pct = round((total_current - total_invested) / total_invested * 100, 2) if total_invested else 0
     pnl_color    = "#28a745" if total_pnl >= 0 else "#dc3545"
     pnl_arrow    = "▲" if total_pnl >= 0 else "▼"
+    gain_color   = "#28a745" if total_gain >= 0 else "#dc3545"
+    gain_arrow   = "▲" if total_gain >= 0 else "▼"
 
     # Overall summary bar
-    bg    = "#d4edda" if total_pnl >= 0 else "#f8d7da"
+    bg    = "#d4edda" if total_gain >= 0 else "#f8d7da"
+    realized_html = (
+        f'<div><div style="font-size:0.8rem;color:#555">Profit Booked</div>'
+        f'<div style="font-size:1.3rem;font-weight:700;color:#17a2b8">&#8377;{total_realized:,.0f}</div></div>'
+    ) if total_realized else ""
     st.markdown(f'''
-    <div style="background:{bg};padding:14px 20px;border-radius:10px;border-left:6px solid {pnl_color};display:flex;gap:40px;flex-wrap:wrap;margin-bottom:10px">
+    <div style="background:{bg};padding:14px 20px;border-radius:10px;border-left:6px solid {gain_color};display:flex;gap:40px;flex-wrap:wrap;margin-bottom:10px">
         <div><div style="font-size:0.8rem;color:#555">Total Invested</div>
              <div style="font-size:1.3rem;font-weight:700">&#8377;{total_invested:,.0f}</div></div>
         <div><div style="font-size:0.8rem;color:#555">Current Value</div>
              <div style="font-size:1.3rem;font-weight:700">&#8377;{total_current:,.0f}</div></div>
-        <div><div style="font-size:0.8rem;color:#555">Overall P&amp;L</div>
+        <div><div style="font-size:0.8rem;color:#555">Unrealised P&amp;L</div>
              <div style="font-size:1.3rem;font-weight:700;color:{pnl_color}">{pnl_arrow} &#8377;{abs(total_pnl):,.0f} ({abs(total_pnl_pct)}%)</div></div>
+        {realized_html}
+        <div><div style="font-size:0.8rem;color:#555">Total Gain (Realised+Unrealised)</div>
+             <div style="font-size:1.3rem;font-weight:700;color:{gain_color}">{gain_arrow} &#8377;{abs(total_gain):,.0f} ({abs(total_gain_pct)}%)</div></div>
         <div><div style="font-size:0.8rem;color:#555">Holdings</div>
              <div style="font-size:1.3rem;font-weight:700">{len(summary_items)} ETFs</div></div>
     </div>
     ''', unsafe_allow_html=True)
+
+    # Profit booked detail table
+    if realized_rows:
+        with st.expander(f"📋 Profit Booked Details — ₹{total_realized:,.0f} realised", expanded=False):
+            df_real = pd.DataFrame(realized_rows, columns=["Symbol", "Units Sold", "Sell Price (₹)", "Realised P&L (₹)"])
+            st.dataframe(df_real, hide_index=True, use_container_width=True)
 
     # Per-ETF mini cards
     cols_s = st.columns(len(summary_items)) if len(summary_items) <= 4 else st.columns(4)
