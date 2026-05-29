@@ -274,7 +274,7 @@ if portfolio:
                     break
         realized_pnl = b["proceeds"]  # full sale proceeds reinvested by user
         total_realized += realized_pnl
-realized_rows.append((sym, b["units_sold"], b["sell_price"], round(b["proceeds"], 2)))
+        realized_rows.append((sym, b["units_sold"], b["sell_price"], round(b["proceeds"], 2)))
 
     total_realized   = round(total_realized, 2)
     total_pnl        = round(total_current - total_invested, 2)
