@@ -271,15 +271,14 @@ if portfolio:
         realized_rows.append((sym, b["units_sold"], b["sell_price"], realized_pnl))
 
     total_realized   = round(total_realized, 2)
+    total_pnl        = round(total_current - total_invested, 2)
+    total_pnl_pct    = round(total_pnl / total_invested * 100, 2) if total_invested else 0
     total_gain       = round(total_pnl + total_realized, 2)
     total_cost_basis = total_invested + sum(
         (portfolio_map[b["nse_symbol"]]["avg_cost"] if b["nse_symbol"] in portfolio_map else 0) * b["units_sold"]
         for b in profit_booked
     )
     total_gain_pct   = round(total_gain / total_cost_basis * 100, 2) if total_cost_basis else 0
-
-    total_pnl    = round(total_current - total_invested, 2)
-    total_pnl_pct = round((total_current - total_invested) / total_invested * 100, 2) if total_invested else 0
     pnl_color    = "#28a745" if total_pnl >= 0 else "#dc3545"
     pnl_arrow    = "▲" if total_pnl >= 0 else "▼"
     gain_color   = "#28a745" if total_gain >= 0 else "#dc3545"
