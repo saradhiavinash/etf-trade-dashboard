@@ -29,7 +29,7 @@ ALL_ETFS = [
 # ── Portfolio helpers ─────────────────────────────────────────
 GOOGLE_SHEET_CSV = (
     "https://docs.google.com/spreadsheets/d/"
-    "1irjEYSjtaH60N_AcmPACxPvAbEmQwQzhgAYsPzSb6Iw/export?format=csv&gid=1129370940"
+    "1irjEYSjtaH60N_AcmPACxPvAbEmQwQzhgAYsPzSb6Iw/export?format=csv"
 )
 PORTFOLIO_FILE = os.path.join(os.path.dirname(__file__), "portfolio.json")
 
@@ -78,14 +78,14 @@ def load_profit_booked():
     try:
         df = pd.read_csv(GOOGLE_SHEET_CSV, header=None)
         booked = []
-        for i in range(2, len(df)):
+        for i in range(3, len(df)):
             row = df.iloc[i]
-            sym = str(row[5]).strip().upper()
+            sym = str(row[6]).strip().upper()
             if not sym or sym in ("NAN", "ETF", ""):
                 continue
             try:
-                units_sold = float(row[6])
-                sell_price = float(row[7])
+                units_sold = float(row[7])
+                sell_price = float(row[8])
             except (ValueError, TypeError):
                 continue
             if units_sold <= 0 or sell_price <= 0:
