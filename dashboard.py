@@ -1,4 +1,5 @@
 import io
+import math
 import streamlit as st
 import pandas as pd
 import yfinance as yf
@@ -52,7 +53,7 @@ def load_portfolio():
                 avg_cost = float(row[3])
             except (ValueError, TypeError):
                 continue
-            if units <= 0 or avg_cost <= 0:
+            if math.isnan(units) or math.isnan(avg_cost) or units <= 0 or avg_cost <= 0:
                 continue
             meta = etf_lookup.get(sym)
             portfolio.append({
@@ -88,7 +89,7 @@ def load_profit_booked():
                 sell_price = float(row[8])
             except (ValueError, TypeError):
                 continue
-            if units_sold <= 0 or sell_price <= 0:
+            if math.isnan(units_sold) or math.isnan(sell_price) or units_sold <= 0 or sell_price <= 0:
                 continue
             booked.append({"nse_symbol": sym, "units_sold": units_sold, "sell_price": sell_price})
         return booked
