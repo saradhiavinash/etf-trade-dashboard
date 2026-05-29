@@ -15,29 +15,55 @@ st.set_page_config(page_title="ETF Signals", page_icon="📈",
 st_autorefresh(interval=300_000, key="autorefresh")
 
 # ── Portfolio helpers ─────────────────────────────────────────
-DEFAULT_PORTFOLIO = [
-    {"label": "HDFC Smallcap 250 ETF", "nse_symbol": "HDFCSML250",
-     "yf_symbol": "HDFCSML250.NS", "units": 131, "avg_cost": 150.96},
-    {"label": "PSU Bank BeES", "nse_symbol": "PSUBNKBEES",
-     "yf_symbol": "PSUBNKBEES.NS", "units": 364, "avg_cost": 97.51},
-]
-
-# Portfolio lives in session_state — persists until browser window closes
-if "portfolio" not in st.session_state:
-    st.session_state["portfolio"] = DEFAULT_PORTFOLIO
-
+GOOGLE_SHEET_CSV = (
+    "https://docs.google.com/spreadsheets/d/"
+    "1irjEYSjtaH60N_AcmPACxPvAbEmQwQzhgAYsPzSb6Iw/export?format=csv&gid=1129370940"
+)
 PORTFOLIO_FILE = os.path.join(os.path.dirname(__file__), "portfolio.json")
 
+@st.cache_data(ttl=60)
 def load_portfolio():
+    """Always loads from Google Sheet (cached 60s). Falls back to portfolio.json."""
+    try:
+        df = pd.read_csv(GOOGLE_SHEET_CSV, header=None)
+        # Sheet layout: row 1 = column headers (ETF, Units, Avg price), data from row 2
+        # Columns: index 1=ETF symbol, 2=units, 3=avg_cost
+        etf_lookup = {e["nse_symbol"]: e for e in ALL_ETFS}
+        portfolio = []
+        for i in range(2, len(df)):
+            row = df.iloc[i]
+            sym = str(row[1]).strip().upper()
+            if not sym or sym in ("NAN", "ETF", ""):
+                continue
+            try:
+                units    = float(row[2])
+                avg_cost = float(row[3])
+            except (ValueError, TypeError):
+                continue
+            if units <= 0 or avg_cost <= 0:
+                continue
+            meta = etf_lookup.get(sym)
+            portfolio.append({
+                "label":      meta["label"]     if meta else sym,
+                "nse_symbol": sym,
+                "yf_symbol":  meta["yf_symbol"] if meta else sym + ".NS",
+                "units":      units,
+                "avg_cost":   avg_cost,
+            })
+        if portfolio:
+            return portfolio
+    except Exception:
+        pass
+    # fallback to local portfolio.json
     if os.path.exists(PORTFOLIO_FILE):
         with open(PORTFOLIO_FILE, "r") as f:
             return json.load(f)
     return []
 
 def save_portfolio(data):
+    """Saves to local portfolio.json as backup only."""
     with open(PORTFOLIO_FILE, "w") as f:
         json.dump(data, f, indent=2)
-    st.session_state["portfolio"] = data
 
 # ── All ETFs catalog ──────────────────────────────────────────
 ALL_ETFS = [
@@ -417,83 +443,14 @@ if st.button("💾 Apply Portfolio Changes", type="primary"):
     st.success(f"✅ Portfolio updated ({len(new_portfolio)} ETFs) — active until window closes.")
     st.rerun()
 
-# ── File Load / Save ─────────────────────────────────────────
+# ── Portfolio source info ─────────────────────────────────────
 st.divider()
-st.subheader("📂 Load / Save Portfolio")
-
-# ── Excel upload ──────────────────────────────────────────────
-st.caption("📥 Upload Excel to load portfolio — columns needed: `nse_symbol`, `units`, `avg_cost`")
-xl_uploaded = st.file_uploader("Upload portfolio Excel", type=["xlsx", "xls"], label_visibility="collapsed", key="xl_upload")
-if xl_uploaded:
-    try:
-        df_xl = pd.read_excel(xl_uploaded)
-        df_xl.columns = [c.strip().lower() for c in df_xl.columns]
-        required = {"nse_symbol", "units", "avg_cost"}
-        if not required.issubset(set(df_xl.columns)):
-            st.error(f"❌ Excel must have columns: {required}. Found: {set(df_xl.columns)}")
-        else:
-            etf_lookup = {e["nse_symbol"]: e for e in ALL_ETFS}
-            new_portfolio = []
-            for _, row in df_xl.iterrows():
-                sym  = str(row["nse_symbol"]).strip().upper()
-                meta = etf_lookup.get(sym)
-                new_portfolio.append({
-                    "label":      meta["label"]    if meta else str(row.get("label", sym)),
-                    "nse_symbol": sym,
-                    "yf_symbol":  meta["yf_symbol"] if meta else sym + ".NS",
-                    "units":      float(row["units"]),
-                    "avg_cost":   float(row["avg_cost"]),
-                })
-            save_portfolio(new_portfolio)
-            st.success(f"✅ Loaded {len(new_portfolio)} ETFs from Excel!")
-            st.rerun()
-    except Exception as e:
-        st.error(f"Error reading Excel: {e}")
-
-# Excel template download
-def make_excel_template():
-    portfolio = load_portfolio()
-    rows = []
-    for p in portfolio:
-        rows.append({"nse_symbol": p["nse_symbol"], "units": p["units"], "avg_cost": p["avg_cost"]})
-    if not rows:
-        # blank template with all ETFs
-        for e in ALL_ETFS:
-            rows.append({"nse_symbol": e["nse_symbol"], "units": 0, "avg_cost": 0.0})
-    buf = io.BytesIO()
-    pd.DataFrame(rows).to_excel(buf, index=False)
-    return buf.getvalue()
-
-col_xl, col_json_load, col_json_save = st.columns(3)
-with col_xl:
-    st.download_button(
-        label="⬇️ Download Excel template",
-        data=make_excel_template(),
-        file_name="portfolio_template.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-    )
-with col_json_load:
-    st.caption("📥 Load from JSON")
-    uploaded = st.file_uploader("Choose portfolio JSON", type="json", label_visibility="collapsed")
-    if uploaded:
-        try:
-            data = json.load(uploaded)
-            save_portfolio(data)
-            st.success(f"✅ Loaded {len(data)} ETFs from JSON!")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Invalid file: {e}")
-with col_json_save:
-    st.caption("📤 Save as JSON")
-    portfolio_json = json.dumps(load_portfolio(), indent=2)
-    st.download_button(
-        label="⬇️ Download portfolio.json",
-        data=portfolio_json,
-        file_name="portfolio.json",
-        mime="application/json",
-        use_container_width=True,
-    )
+st.info(
+    "📊 Portfolio is loaded automatically from your **[Google Sheet]("
+    "https://docs.google.com/spreadsheets/d/1irjEYSjtaH60N_AcmPACxPvAbEmQwQzhgAYsPzSb6Iw/edit)"
+    "** every 60 seconds. Edit the sheet and the dashboard will refresh automatically.",
+    icon="🔄",
+)
 
 st.divider()
 st.caption("For informational use only. Not financial advice.")
