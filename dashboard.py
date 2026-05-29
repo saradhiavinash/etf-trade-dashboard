@@ -15,18 +15,6 @@ st.set_page_config(page_title="ETF Signals", page_icon="📈",
 
 st_autorefresh(interval=300_000, key="autorefresh")
 
-# ── All ETFs catalog ────────────────────────────────────────────────────────
-ALL_ETFS = [
-    {"label": "HDFC Smallcap 250 ETF", "nse_symbol": "HDFCSML250",  "yf_symbol": "HDFCSML250.NS",  "risk": "Very Aggressive", "risk_color": "#dc3545"},
-    {"label": "PSU Bank BeES",          "nse_symbol": "PSUBNKBEES",  "yf_symbol": "PSUBNKBEES.NS",  "risk": "Aggressive",      "risk_color": "#fd7e14"},
-    {"label": "Nifty BeES",             "nse_symbol": "NIFTYBEES",   "yf_symbol": "NIFTYBEES.NS",   "risk": "Stable",          "risk_color": "#28a745"},
-    {"label": "Gold BeES",              "nse_symbol": "GOLDBEES",    "yf_symbol": "GOLDBEES.NS",    "risk": "Stable",          "risk_color": "#28a745"},
-    {"label": "Bank BeES",              "nse_symbol": "BANKBEES",    "yf_symbol": "BANKBEES.NS",    "risk": "Aggressive",      "risk_color": "#fd7e14"},
-    {"label": "IT BeES",                "nse_symbol": "ITBEES",      "yf_symbol": "ITBEES.NS",      "risk": "Aggressive",      "risk_color": "#fd7e14"},
-    {"label": "Junior BeES",            "nse_symbol": "JUNIORBEES",  "yf_symbol": "JUNIORBEES.NS",  "risk": "Very Aggressive", "risk_color": "#dc3545"},
-    {"label": "Momentum 100",           "nse_symbol": "MOM100",      "yf_symbol": "MOM100.NS",      "risk": "Very Aggressive", "risk_color": "#dc3545"},
-]
-
 # ── Portfolio helpers ─────────────────────────────────────────
 GOOGLE_SHEET_CSV = (
     "https://docs.google.com/spreadsheets/d/"
@@ -36,14 +24,11 @@ PORTFOLIO_FILE = os.path.join(os.path.dirname(__file__), "portfolio.json")
 
 @st.cache_data(ttl=60)
 def load_portfolio():
-    """Always loads from Google Sheet (cached 60s). Falls back to portfolio.json."""
+    """Loads bought ETFs (units > 0) from Google Sheet. Falls back to portfolio.json."""
     try:
         df = pd.read_csv(GOOGLE_SHEET_CSV, header=None)
-        # Sheet layout: row 1 = column headers (ETF, Units, Avg price), data from row 2
-        # Columns: index 1=ETF symbol, 2=units, 3=avg_cost
-        etf_lookup = {e["nse_symbol"]: e for e in ALL_ETFS}
         portfolio = []
-        for i in range(2, len(df)):
+        for i in range(3, len(df)):
             row = df.iloc[i]
             sym = str(row[1]).strip().upper()
             if not sym or sym in ("NAN", "ETF", ""):
@@ -55,11 +40,11 @@ def load_portfolio():
                 continue
             if math.isnan(units) or math.isnan(avg_cost) or units <= 0 or avg_cost <= 0:
                 continue
-            meta = etf_lookup.get(sym)
+            m = etf_meta(sym)
             portfolio.append({
-                "label":      meta["label"]     if meta else sym,
+                "label":      m["label"],
                 "nse_symbol": sym,
-                "yf_symbol":  meta["yf_symbol"] if meta else sym + ".NS",
+                "yf_symbol":  m["yf_symbol"],
                 "units":      units,
                 "avg_cost":   avg_cost,
             })
@@ -67,11 +52,30 @@ def load_portfolio():
             return portfolio
     except Exception:
         pass
-    # fallback to local portfolio.json
     if os.path.exists(PORTFOLIO_FILE):
         with open(PORTFOLIO_FILE, "r") as f:
             return json.load(f)
     return []
+
+@st.cache_data(ttl=60)
+def load_sheet_etfs():
+    """Loads ALL ETFs from sheet (units=0 = watchlist). Used to drive signals table."""
+    try:
+        df = pd.read_csv(GOOGLE_SHEET_CSV, header=None)
+        etfs = []
+        seen = set()
+        for i in range(3, len(df)):
+            row = df.iloc[i]
+            sym = str(row[1]).strip().upper()
+            if not sym or sym in ("NAN", "ETF", "") or sym in seen:
+                continue
+            seen.add(sym)
+            m = etf_meta(sym)
+            etfs.append({"nse_symbol": sym, "yf_symbol": m["yf_symbol"],
+                         "label": m["label"], "risk": m["risk"], "risk_color": m["risk_color"]})
+        return etfs if etfs else None
+    except Exception:
+        return None
 
 @st.cache_data(ttl=60)
 def load_profit_booked():
@@ -229,6 +233,13 @@ portfolio     = load_portfolio()
 portfolio_map = {p["nse_symbol"]: p for p in portfolio}
 profit_booked = load_profit_booked()
 profit_booked_map = {b["nse_symbol"]: b for b in profit_booked}
+# Sheet ETFs drive the signals table; fall back to portfolio ETFs if sheet unreachable
+_sheet_etfs   = load_sheet_etfs()
+sheet_etfs    = _sheet_etfs if _sheet_etfs else [
+    {"nse_symbol": p["nse_symbol"], "yf_symbol": p["yf_symbol"],
+     "label": p["label"], **{k: etf_meta(p["nse_symbol"])[k] for k in ("risk", "risk_color")}}
+    for p in portfolio
+]
 
 st.title("📈 ETF Signal Dashboard")
 st.caption(f"{datetime.now().strftime('%d %b %Y, %I:%M %p')} IST  |  Auto-refreshes every 5 min  |  🟢 NSE Live = real-time  🟡 YF ~15m = 15min delayed  ⚪ EOD = prev close")
@@ -333,16 +344,16 @@ if portfolio:
 
 st.divider()
 
-# Build rows
+# Build rows — driven entirely by sheet ETFs
 rows = []
-for etf in ALL_ETFS:
+for etf in sheet_etfs:
     df = get_price_data(etf["yf_symbol"])
     if df.empty:
         continue
     nse        = etf["nse_symbol"]
     avg_cost   = portfolio_map[nse]["avg_cost"] if nse in portfolio_map else None
     sig        = compute_signals(df, avg_cost=avg_cost)
-    nse_price  = get_nse_price(etf["nse_symbol"])
+    nse_price  = get_nse_price(nse)
     yf_price   = get_live_price_yf(etf["yf_symbol"]) if not nse_price else None
     price      = nse_price or yf_price or sig["price"]
     price_src  = "🟢 NSE Live" if nse_price else ("🟡 YF ~15m" if yf_price else "⚪ EOD")
