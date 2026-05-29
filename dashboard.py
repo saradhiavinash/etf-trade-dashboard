@@ -26,10 +26,17 @@ DEFAULT_PORTFOLIO = [
 if "portfolio" not in st.session_state:
     st.session_state["portfolio"] = DEFAULT_PORTFOLIO
 
+PORTFOLIO_FILE = os.path.join(os.path.dirname(__file__), "portfolio.json")
+
 def load_portfolio():
-    return st.session_state["portfolio"]
+    if os.path.exists(PORTFOLIO_FILE):
+        with open(PORTFOLIO_FILE, "r") as f:
+            return json.load(f)
+    return []
 
 def save_portfolio(data):
+    with open(PORTFOLIO_FILE, "w") as f:
+        json.dump(data, f, indent=2)
     st.session_state["portfolio"] = data
 
 # ── All ETFs catalog ──────────────────────────────────────────
