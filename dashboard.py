@@ -278,7 +278,7 @@ if portfolio:
         (portfolio_map[b["nse_symbol"]]["avg_cost"] if b["nse_symbol"] in portfolio_map else 0) * b["units_sold"]
         for b in profit_booked
     )
-    total_realized_pct = round(total_realized / realized_cost_total * 100, 2) if realized_cost_total else 0
+    total_realized_pct = round(total_realized / (total_invested + realized_cost_total) * 100, 2) if (total_invested + realized_cost_total) else 0
     total_pnl        = round(total_current - total_invested, 2)
     total_pnl_pct    = round(total_pnl / total_invested * 100, 2) if total_invested else 0
     total_gain       = round(total_pnl + total_realized, 2)
