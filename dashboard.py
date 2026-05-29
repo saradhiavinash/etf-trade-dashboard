@@ -75,7 +75,7 @@ def load_portfolio():
 
 @st.cache_data(ttl=60)
 def load_profit_booked():
-    """Reads 'Profit booked' columns from Google Sheet (cols 5=symbol,6=units,7=sell price)."""
+    """Reads 'Profit booked' columns from Google Sheet (cols 6=symbol,7=units,8=sell price,9=proceeds)."""
     try:
         df = pd.read_csv(GOOGLE_SHEET_CSV, header=None)
         booked = []
@@ -87,11 +87,16 @@ def load_profit_booked():
             try:
                 units_sold = float(row[7])
                 sell_price = float(row[8])
+                # col 9 = pre-calculated sale proceeds from user's sheet
+                proceeds   = float(row[9])
             except (ValueError, TypeError):
                 continue
             if math.isnan(units_sold) or math.isnan(sell_price) or units_sold <= 0 or sell_price <= 0:
                 continue
-            booked.append({"nse_symbol": sym, "units_sold": units_sold, "sell_price": sell_price})
+            # Use sheet's proceeds column if valid, else fallback to sell_price * units_sold
+            if math.isnan(proceeds) or proceeds <= 0:
+                proceeds = round(sell_price * units_sold, 2)
+            booked.append({"nse_symbol": sym, "units_sold": units_sold, "sell_price": sell_price, "proceeds": proceeds})
         return booked
     except Exception:
         return []
@@ -267,9 +272,9 @@ if portfolio:
                 if s == sym:
                     avg_c = av
                     break
-        realized_pnl = round((b["sell_price"] - (avg_c or 0)) * b["units_sold"], 2)
+        realized_pnl = b["proceeds"]  # full sale proceeds reinvested by user
         total_realized += realized_pnl
-        realized_rows.append((sym, b["units_sold"], b["sell_price"], realized_pnl))
+realized_rows.append((sym, b["units_sold"], b["sell_price"], round(b["proceeds"], 2)))
 
     total_realized   = round(total_realized, 2)
     total_pnl        = round(total_current - total_invested, 2)
@@ -288,7 +293,7 @@ if portfolio:
     # Overall summary bar
     bg    = "#d4edda" if total_gain >= 0 else "#f8d7da"
     realized_html = (
-        f'<div><div style="font-size:0.8rem;color:#555">Profit Booked</div>'
+        f'<div><div style="font-size:0.8rem;color:#555">Profit Booked (Reinvested)</div>'
         f'<div style="font-size:1.3rem;font-weight:700;color:#17a2b8">&#8377;{total_realized:,.0f}</div></div>'
     ) if total_realized else ""
     st.markdown(f'''
@@ -309,8 +314,8 @@ if portfolio:
 
     # Profit booked detail table
     if realized_rows:
-        with st.expander(f"📋 Profit Booked Details — ₹{total_realized:,.0f} realised", expanded=False):
-            df_real = pd.DataFrame(realized_rows, columns=["Symbol", "Units Sold", "Sell Price (₹)", "Realised P&L (₹)"])
+        with st.expander(f"📋 Profit Booked Details — ₹{total_realized:,.0f} reinvested", expanded=False):
+            df_real = pd.DataFrame(realized_rows, columns=["Symbol", "Units Sold", "Sell Price (₹)", "Proceeds Reinvested (₹)"])
             st.dataframe(df_real, hide_index=True, use_container_width=True)
 
     # Per-ETF mini cards
