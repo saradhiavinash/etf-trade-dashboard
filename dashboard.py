@@ -53,7 +53,7 @@ def load_portfolio():
     except Exception:
         pass
     if os.path.exists(PORTFOLIO_FILE):
-        with open(PORTFOLIO_FILE, "r") as f:
+        with open(PORTFOLIO_FILE, "r", encoding="utf-8-sig") as f:
             return json.load(f)
     return []
 

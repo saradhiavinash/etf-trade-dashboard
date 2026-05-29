@@ -1,6 +1,30 @@
-﻿[
-  {"label": "HDFC Smallcap 250 ETF", "nse_symbol": "HDFCSML250", "yf_symbol": "HDFCSML250.NS", "units": 131, "avg_cost": 150.96},
-  {"label": "PSU Bank BeES",          "nse_symbol": "PSUBNKBEES", "yf_symbol": "PSUBNKBEES.NS", "units": 364, "avg_cost": 97.51},
-  {"label": "Gold BeES",              "nse_symbol": "GOLDBEES",   "yf_symbol": "GOLDBEES.NS",   "units": 193, "avg_cost": 126.64},
-  {"label": "Junior BeES",            "nse_symbol": "JUNIORBEES", "yf_symbol": "JUNIORBEES.NS", "units": 45,  "avg_cost": 776.74}
+[
+  {
+    "label": "HDFC Smallcap 250 ETF",
+    "nse_symbol": "HDFCSML250",
+    "yf_symbol": "HDFCSML250.NS",
+    "units": 131,
+    "avg_cost": 150.96
+  },
+  {
+    "label": "PSU Bank BeES",
+    "nse_symbol": "PSUBNKBEES",
+    "yf_symbol": "PSUBNKBEES.NS",
+    "units": 364,
+    "avg_cost": 97.51
+  },
+  {
+    "label": "Gold BeES",
+    "nse_symbol": "GOLDBEES",
+    "yf_symbol": "GOLDBEES.NS",
+    "units": 193,
+    "avg_cost": 126.64
+  },
+  {
+    "label": "Junior BeES",
+    "nse_symbol": "JUNIORBEES",
+    "yf_symbol": "JUNIORBEES.NS",
+    "units": 45,
+    "avg_cost": 776.74
+  }
 ]
